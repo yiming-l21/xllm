@@ -126,7 +126,7 @@ class ContinuousScheduler : public Scheduler {
   Engine* engine_;
 
   // the block manager to manage the cache blocks
-  BlockManagerPool* block_manager_;
+  BlockManagerPool* block_manager_pool_;
 
   // a thread safe queue of requests, bounded by kRequestQueueSize
   // the schedule owns the requests and manages their lifetimes.

@@ -207,7 +207,7 @@ size_t PrefixCacheHashMurmur3::evict(size_t n_blocks) {
   Node* iter_node = lru_lst_.get_first();
   std::vector<Murmur3Key> del_list;
   del_list.reserve(n_blocks);
-  for (size_t i = 0; i < n_blocks; ++i) {
+  for (size_t i = 0; i < n_blocks;) {
     if (lru_lst_.is_last(iter_node)) {
       break;
     }
@@ -233,6 +233,7 @@ size_t PrefixCacheHashMurmur3::evict(size_t n_blocks) {
     delete del_node;
     ++evict_count;
     --num_blocks_;
+    ++i;
   }
   if (enable_service_routing_) {
     threadpool_.schedule([del_list = std::move(del_list), this]() {

@@ -77,7 +77,7 @@ void ChunkedPrefillScheduler::handle_abnormal_request(
           << "Running queue size is not 1, there maybe a bug of request "
              "preemption logic. running_queue_.size ="
           << running_queue_.size();
-      if (util::sum(block_manager_->num_used_blocks()) !=
+      if (util::sum(block_manager_pool_->num_used_blocks()) !=
           request->total_num_blocks()) {
         // blocks_exhausted is true.
         // NOTE: consider dp > 1, here we need get all num blocks in use.
@@ -91,7 +91,7 @@ void ChunkedPrefillScheduler::handle_abnormal_request(
 
     // request is too long, budget or memory no enough.
     running_queue_.pop_front();
-    block_manager_->deallocate(request.get());
+    block_manager_pool_->deallocate(request.get());
     response_processor_->process_failed_request(
         request,
         {StatusCode::RESOURCE_EXHAUSTED,
@@ -166,7 +166,7 @@ void ChunkedPrefillScheduler::handle_running_queue_requests(
       }
 
       // if (sequence->if_cache_block_for_prefill()) {
-      //   block_manager_->cache(sequence.get());
+      //   block_manager_pool_->cache(sequence.get());
       // }
 
       // the new request do chunked prefill
@@ -221,7 +221,7 @@ void ChunkedPrefillScheduler::handle_running_queue_requests(
 
       if (request_to_preempt.get() != request.get()) {
         ++num_preempted_requests;
-        block_manager_->deallocate(request_to_preempt.get());
+        block_manager_pool_->deallocate(request_to_preempt.get());
         running_queue_.pop_back();
         // add preemptable request to waiting priority queue
         request_to_preempt->set_preempted();
@@ -260,7 +260,7 @@ void ChunkedPrefillScheduler::handle_prefill_requests(
          remaining_seq_budget > 0) {
     std::shared_ptr<Request> request(waiting_priority_queue_.top());
     if (request->finished() || request->cancelled()) {
-      block_manager_->deallocate(request.get());
+      block_manager_pool_->deallocate(request.get());
       // release the ownership of the request
       finished_requests.emplace_back(request);
       // remove the request from the priority queue
@@ -304,7 +304,7 @@ void ChunkedPrefillScheduler::handle_prefill_requests(
                                num_tokens,
                                &current_step_handle_tokens)) {
         // release shared blocks
-        block_manager_->deallocate(prefill_sequence.get());
+        block_manager_pool_->deallocate(prefill_sequence.get());
         can_schedule = false;
         blocks_exhausted = true;
         break;
@@ -318,7 +318,7 @@ void ChunkedPrefillScheduler::handle_prefill_requests(
     if (!can_schedule) {
       for (auto& seq : prefill_sequences) {
         // release shared blocks
-        block_manager_->deallocate(seq);
+        block_manager_pool_->deallocate(seq);
       }
       break;
     }
@@ -343,13 +343,14 @@ void ChunkedPrefillScheduler::handle_prefill_requests(
   }
 
   if (running_sequences_.empty() && !waiting_priority_queue_.empty() &&
-      running_queue_.empty() && block_manager_->kv_cache_utilization() == 0) {
+      running_queue_.empty() &&
+      block_manager_pool_->kv_cache_utilization() == 0) {
     LOG(ERROR) << "Request prompt is too long, no enough memory to schedule "
                   "a single sequence";
     // no enough memory to schedule single sequence, just finish the request
     std::shared_ptr<Request> request(waiting_priority_queue_.top());
     waiting_priority_queue_.pop();
-    block_manager_->deallocate(request.get());
+    block_manager_pool_->deallocate(request.get());
     response_processor_->process_failed_request(
         request,
         {StatusCode::RESOURCE_EXHAUSTED,
@@ -425,7 +426,7 @@ std::vector<Batch> ChunkedPrefillScheduler::prepare_batch() {
     std::shared_ptr<Request> request = *it;
     request->update_connection_status();
     if (request->finished() || request->cancelled()) {
-      block_manager_->deallocate(request.get());
+      block_manager_pool_->deallocate(request.get());
       // release the ownership of the request
       finished_requests.emplace_back(request);
       // finished request is set to nullptr
@@ -451,13 +452,13 @@ std::vector<Batch> ChunkedPrefillScheduler::prepare_batch() {
     // check if the request can be expanded
     if (request->expand_sequences()) {
       // cache the blocks to share among the sequences
-      block_manager_->cache(request->sequences()[0].get());
+      block_manager_pool_->cache(request->sequences()[0].get());
     }
 
     // release blocks for finished sequences here
     for (auto& sequence : request->sequences()) {
       if (sequence->finished()) {
-        block_manager_->deallocate(sequence.get());
+        block_manager_pool_->deallocate(sequence.get());
       }
     }
 
@@ -555,11 +556,12 @@ std::vector<Batch> ChunkedPrefillScheduler::prepare_batch() {
 
   GAUGE_SET(num_running_sequences, running_sequences_.size());
 
-  GAUGE_SET(kv_cache_utilization_perc, block_manager_->kv_cache_utilization());
+  GAUGE_SET(kv_cache_utilization_perc,
+            block_manager_pool_->kv_cache_utilization());
   GAUGE_SET(num_blocks_in_prefix_cache,
-            util::min(block_manager_->num_blocks_in_prefix_cache()));
-  GAUGE_SET(num_free_blocks, util::max(block_manager_->num_free_blocks()));
-  GAUGE_SET(num_used_blocks, util::min(block_manager_->num_used_blocks()));
+            util::min(block_manager_pool_->num_blocks_in_prefix_cache()));
+  GAUGE_SET(num_free_blocks, util::max(block_manager_pool_->num_free_blocks()));
+  GAUGE_SET(num_used_blocks, util::min(block_manager_pool_->num_used_blocks()));
 
   return batches;
 }
@@ -573,7 +575,7 @@ bool ChunkedPrefillScheduler::allocate_blocks_for(
 
   if (sequence->kv_state().num_kv_blocks() == 0) {
     // allocate shared blocks
-    block_manager_->allocate_shared(sequence);
+    block_manager_pool_->allocate_shared(sequence);
   }
   allocate_shared_blocks_for(sequence);
 
@@ -600,13 +602,13 @@ bool ChunkedPrefillScheduler::allocate_blocks_for(
   // number of tokens and the number of tokens already processed
   *current_step_handle_tokens = max_handle_num_tokens - kv_cache_tokens_num;
   // allocate blocks for the sequence
-  return block_manager_->allocate(sequence, max_handle_num_tokens);
+  return block_manager_pool_->allocate(sequence, max_handle_num_tokens);
 }
 
 void ChunkedPrefillScheduler::allocate_shared_blocks_for(Sequence* sequence) {
   if (sequence->kv_state().num_kv_blocks() == 0) {
     // allocate shared blocks
-    block_manager_->allocate_shared(sequence);
+    block_manager_pool_->allocate_shared(sequence);
     return;
   }
   if (sequence->is_prefill_stage()) {
@@ -616,7 +618,7 @@ void ChunkedPrefillScheduler::allocate_shared_blocks_for(Sequence* sequence) {
         (sequence->num_tokens() + max_tokens_per_chunk_for_prefill - 1) /
         max_tokens_per_chunk_for_prefill;
     if (total_chunked_size < FLAGS_chunked_match_frequency) {
-      block_manager_->allocate_shared(sequence);
+      block_manager_pool_->allocate_shared(sequence);
       return;
     }
     size_t prefix_cache_interval =
@@ -626,7 +628,7 @@ void ChunkedPrefillScheduler::allocate_shared_blocks_for(Sequence* sequence) {
                                max_tokens_per_chunk_for_prefill;
     if (cur_chunked_index % prefix_cache_interval == 0) {
       // allocate shared blocks
-      block_manager_->allocate_shared(sequence);
+      block_manager_pool_->allocate_shared(sequence);
     }
   }
 }

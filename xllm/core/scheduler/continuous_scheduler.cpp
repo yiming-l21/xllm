@@ -39,9 +39,9 @@ constexpr size_t kRequestQueueSize = 100000;
 ContinuousScheduler::ContinuousScheduler(Engine* engine, const Options& options)
     : options_(options), engine_(engine), request_queue_(kRequestQueueSize) {
   CHECK(engine_ != nullptr);
-  block_manager_ = engine_->block_manager_pool();
-  CHECK(block_manager_ != nullptr);
-  enable_prefix_cache_ = block_manager_->options().enable_prefix_cache();
+  block_manager_pool_ = engine_->block_manager_pool();
+  CHECK(block_manager_pool_ != nullptr);
+  enable_prefix_cache_ = block_manager_pool_->options().enable_prefix_cache();
 
   last_batch_.resize(options_.dp_size());
 
@@ -85,11 +85,11 @@ void ContinuousScheduler::handle_prefill_requests(
   // they may contian many sequences, so we should check here.
   while (!waiting_priority_queue_.empty() && remaining_seq_budget > 0 &&
          remaining_token_budget > 0 &&
-         block_manager_->kv_cache_utilization() <
+         block_manager_pool_->kv_cache_utilization() <
              FLAGS_prefill_scheduling_memory_usage_threshold) {
     std::shared_ptr<Request> request(waiting_priority_queue_.top());
     if (request->finished() || request->cancelled()) {
-      block_manager_->deallocate(request.get());
+      block_manager_pool_->deallocate(request.get());
       // release the ownership of the request
       finished_requests.emplace_back(request);
       // remove the request from the priority queue
@@ -124,8 +124,8 @@ void ContinuousScheduler::handle_prefill_requests(
         break;
       }
 
-      if (!block_manager_->allocate(prefill_sequence.get())) {
-        block_manager_->deallocate(prefill_sequence.get());
+      if (!block_manager_pool_->allocate(prefill_sequence.get())) {
+        block_manager_pool_->deallocate(prefill_sequence.get());
         can_schedule = false;
         break;
       }
@@ -139,7 +139,7 @@ void ContinuousScheduler::handle_prefill_requests(
     if (!can_schedule) {
       for (auto& seq : prefill_sequences) {
         // release shared blocks
-        block_manager_->deallocate(seq);
+        block_manager_pool_->deallocate(seq);
       }
       break;
     }
@@ -161,13 +161,14 @@ void ContinuousScheduler::handle_prefill_requests(
   }
 
   if (running_sequences_.empty() && !waiting_priority_queue_.empty() &&
-      running_queue_.empty() && block_manager_->kv_cache_utilization() == 0) {
+      running_queue_.empty() &&
+      block_manager_pool_->kv_cache_utilization() == 0) {
     LOG(ERROR) << "Request prompt is too long, no enough memory to schedule "
                   "a single sequence.";
     // no enough memory to schedule single sequence, just finish the request
     std::shared_ptr<Request> request(waiting_priority_queue_.top());
     waiting_priority_queue_.pop();
-    block_manager_->deallocate(request.get());
+    block_manager_pool_->deallocate(request.get());
     response_processor_->process_failed_request(
         request,
         {StatusCode::RESOURCE_EXHAUSTED,
@@ -224,13 +225,13 @@ void ContinuousScheduler::handle_decode_requests(
       size_t updated_num_tokens =
           sequence->num_tokens() + options_.num_speculative_tokens() + 1;
       // no blocks left
-      if (!block_manager_->allocate(sequence.get(), updated_num_tokens)) {
+      if (!block_manager_pool_->allocate(sequence.get(), updated_num_tokens)) {
         has_enough_blocks = false;
         break;
       }
 
       if (sequence->if_cache_block_for_prefill()) {
-        block_manager_->cache(sequence.get());
+        block_manager_pool_->cache(sequence.get());
       }
 
       // update the allocated tokens for the sequence
@@ -279,7 +280,7 @@ void ContinuousScheduler::handle_decode_requests(
 
       if (request_to_preempt.get() != request.get()) {
         ++num_preempted_requests;
-        block_manager_->deallocate(request_to_preempt.get());
+        block_manager_pool_->deallocate(request_to_preempt.get());
         running_queue_.pop_back();
         // add preemptable request to waiting priority queue
         request_to_preempt->set_preempted();
@@ -339,7 +340,7 @@ void ContinuousScheduler::handle_abnormal_request(
           << "Running queue size is not 1, there maybe a bug of request "
              "preemption logic. running_queue_.size ="
           << running_queue_.size();
-      if (util::sum(block_manager_->num_used_blocks()) !=
+      if (util::sum(block_manager_pool_->num_used_blocks()) !=
           request->total_num_blocks()) {
         // blocks_exhausted is true.
         // NOTE: consider dp > 1, here we need get all num blocks in use.
@@ -353,7 +354,7 @@ void ContinuousScheduler::handle_abnormal_request(
 
     // request is too long, budget or memory no enough.
     running_queue_.pop_front();
-    block_manager_->deallocate(request.get());
+    block_manager_pool_->deallocate(request.get());
     response_processor_->process_failed_request(
         request,
         {StatusCode::RESOURCE_EXHAUSTED,
@@ -384,13 +385,13 @@ void ContinuousScheduler::handle_running_requests(
   // check if the request can be expanded
   if (request->expand_sequences()) {
     // cache the blocks to share among the sequences
-    block_manager_->cache(request->sequences()[0].get());
+    block_manager_pool_->cache(request->sequences()[0].get());
   }
 
   // release blocks for finished sequences here
   for (auto& sequence : request->sequences()) {
     if (sequence->finished()) {
-      block_manager_->deallocate(sequence.get());
+      block_manager_pool_->deallocate(sequence.get());
     }
   }
 }
@@ -428,7 +429,7 @@ std::vector<Batch> ContinuousScheduler::prepare_batch() {
     std::shared_ptr<Request> request = *it;
     request->update_connection_status();
     if (request->finished() || request->cancelled()) {
-      block_manager_->deallocate(request.get());
+      block_manager_pool_->deallocate(request.get());
       // release the ownership of the request
       finished_requests.emplace_back(request);
       // finished request is set to nullptr
@@ -516,11 +517,12 @@ std::vector<Batch> ContinuousScheduler::prepare_batch() {
 
   GAUGE_SET(num_running_sequences, running_sequences_.size());
 
-  GAUGE_SET(kv_cache_utilization_perc, block_manager_->kv_cache_utilization());
+  GAUGE_SET(kv_cache_utilization_perc,
+            block_manager_pool_->kv_cache_utilization());
   GAUGE_SET(num_blocks_in_prefix_cache,
-            util::min(block_manager_->num_blocks_in_prefix_cache()));
-  GAUGE_SET(num_free_blocks, util::max(block_manager_->num_free_blocks()));
-  GAUGE_SET(num_used_blocks, util::min(block_manager_->num_used_blocks()));
+            util::min(block_manager_pool_->num_blocks_in_prefix_cache()));
+  GAUGE_SET(num_free_blocks, util::max(block_manager_pool_->num_free_blocks()));
+  GAUGE_SET(num_used_blocks, util::min(block_manager_pool_->num_used_blocks()));
   return batches;
 }
 
@@ -656,8 +658,8 @@ void ContinuousScheduler::process_batch_output(bool enable_schedule_overlap) {
       get_num_occupied_slots(to_be_processed_sequences);
   std::vector<int64_t> active_activation_size_in_bytes =
       get_active_activation_in_bytes();
-  int64_t num_total_slots = block_manager_->options().num_blocks() *
-                            block_manager_->options().block_size();
+  int64_t num_total_slots = block_manager_pool_->options().num_blocks() *
+                            block_manager_pool_->options().block_size();
   for (int32_t dp_rank = 0; dp_rank < options_.dp_size(); ++dp_rank) {
     double occupied_slots_ratio =
         static_cast<double>(num_occupied_slots[dp_rank]) / num_total_slots;
@@ -712,16 +714,16 @@ void ContinuousScheduler::process_batch_output(bool enable_schedule_overlap) {
 
 std::vector<Block> ContinuousScheduler::allocate_blocks_for(size_t token_num,
                                                             int32_t& dp_rank) {
-  return block_manager_->allocate(token_num, dp_rank);
+  return block_manager_pool_->allocate(token_num, dp_rank);
 }
 
 std::vector<int64_t> ContinuousScheduler::get_num_occupied_slots(
     std::vector<Sequence*>& sequences) const {
   std::vector<int64_t> num_occupied_slots(options_.dp_size());
   std::vector<int64_t> num_unfilled_blocks(options_.dp_size());
-  std::vector<size_t> num_used_blocks = block_manager_->num_used_blocks();
+  std::vector<size_t> num_used_blocks = block_manager_pool_->num_used_blocks();
 
-  const int block_size = block_manager_->options().block_size();
+  const int block_size = block_manager_pool_->options().block_size();
 
   for (auto& sequence : sequences) {
     const int32_t dp_rank = sequence->dp_rank();

@@ -455,13 +455,13 @@ void DisaggPDScheduler::prefill_send_first_generation() {
           std::lock_guard<std::mutex> lock(req_to_channel_map_mutex_);
           req_to_channel_map_.erase(request->request_id());
         }
-        block_manager_->deallocate(request.get());
+        block_manager_pool_->deallocate(request.get());
       } else {
         // release the memory for other requests.
         // TODO: FIXME
         // Here, we should decide whether to recycle the allocated blocks
         // according to whether all the blocks have been transmitted or not.
-        block_manager_->deallocate(request.get());
+        block_manager_pool_->deallocate(request.get());
       }
     }
   });
@@ -521,7 +521,7 @@ bool DisaggPDScheduler::decode_schedule(
   if (!stub) {
     LOG(ERROR) << "Failed to create rpc channel for prefill instance: "
                << prefill_instance_name;
-    block_manager_->deallocate(request.get());
+    block_manager_pool_->deallocate(request.get());
     return false;
   }
 
@@ -923,7 +923,7 @@ std::vector<Block> DisaggPDScheduler::allocate_raw_blocks(int token_num,
                                                           int32_t& dp_rank) {
   // When the KV Cache usage reaches the threshold, prefill requests will no
   // longer be scheduled to avoid frequent preemption.
-  if (block_manager_->kv_cache_utilization() <
+  if (block_manager_pool_->kv_cache_utilization() <
       FLAGS_prefill_scheduling_memory_usage_threshold) {
     return allocate_blocks_for(token_num, dp_rank);
   } else {

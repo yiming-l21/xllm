@@ -163,7 +163,7 @@ size_t PrefixCacheHashSha256::evict(size_t n_blocks) {
 
   size_t evict_count = 0;
   Node* iter_node = lru_lst_.get_first();
-  for (; evict_count < n_blocks; ++evict_count) {
+  for (; evict_count < n_blocks;) {
     if (lru_lst_.is_last(iter_node)) {
       break;
     }
@@ -185,6 +185,7 @@ size_t PrefixCacheHashSha256::evict(size_t n_blocks) {
     delete del_node;
 
     --num_blocks_;
+    ++evict_count;
   }
 
   return evict_count;
