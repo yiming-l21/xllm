@@ -47,6 +47,15 @@ RequestParams::RequestParams(const proto::CompletionRequest& request,
   request_id = generate_completion_request_id();
   x_request_id = x_rid;
   x_request_time = x_rtime;
+  if (request.has_offline()) {
+    offline = request.offline();
+  }
+  if (request.has_slo_ms()) {
+    slo_ms = request.slo_ms();
+  }
+  if (request.has_priority()) {
+    priority = static_cast<xllm::RequestPriority>(request.priority());
+  }
 
   if (request.has_service_request_id()) {
     service_request_id = request.service_request_id();
@@ -186,6 +195,17 @@ void InitFromChatRequest(RequestParams& params, const ChatRequest& request) {
   if (request.has_request_id()) {
     params.request_id = request.request_id();
   }
+
+  if (request.has_offline()) {
+    params.offline = request.offline();
+  }
+  if (request.has_slo_ms()) {
+    params.slo_ms = request.slo_ms();
+  }
+  if (request.has_priority()) {
+    params.priority = static_cast<xllm::RequestPriority>(request.priority());
+  }
+
   if (request.has_service_request_id()) {
     params.service_request_id = request.service_request_id();
   }
@@ -254,6 +274,11 @@ void InitFromChatRequest(RequestParams& params, const ChatRequest& request) {
     } else {
       params.tool_choice = "auto";
     }
+  }
+
+  if (request.has_chat_template_kwargs()) {
+    params.chat_template_kwargs =
+        proto_struct_to_json(request.chat_template_kwargs());
   }
 }
 }  // namespace

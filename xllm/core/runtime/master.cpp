@@ -62,8 +62,20 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
   if (options.communication_backend().has_value()) {
     FLAGS_communication_backend = options.communication_backend().value();
   }
-  if (options.communication_backend().has_value()) {
+  if (options.expert_parallel_degree().has_value()) {
     FLAGS_expert_parallel_degree = options.expert_parallel_degree().value();
+  }
+  if (options.enable_eplb().has_value()) {
+    FLAGS_enable_eplb = options.enable_eplb().value();
+  }
+  if (options.redundant_experts_num().has_value()) {
+    FLAGS_redundant_experts_num = options.redundant_experts_num().value();
+  }
+  if (options.eplb_update_interval().has_value()) {
+    FLAGS_eplb_update_interval = options.eplb_update_interval().value();
+  }
+  if (options.eplb_update_threshold().has_value()) {
+    FLAGS_eplb_update_threshold = options.eplb_update_threshold().value();
   }
 #endif
 
@@ -96,7 +108,8 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
         .task_type(options.task_type())
         .enable_chunked_prefill(options_.enable_chunked_prefill())
         .enable_disagg_pd(options_.enable_disagg_pd())
-        .enable_service_routing(options_.enable_service_routing());
+        .enable_service_routing(options_.enable_service_routing())
+        .enable_cache_upload(options_.enable_cache_upload());
 
     auto engine = std::make_unique<VLMEngine>(eng_options);
     engine_ = std::move(engine);
@@ -134,7 +147,9 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
         .transfer_listen_port(options_.transfer_listen_port())
         .enable_disagg_pd(options_.enable_disagg_pd())
         .enable_service_routing(options_.enable_service_routing())
-        .enable_schedule_overlap(options_.enable_schedule_overlap());
+        .enable_schedule_overlap(options_.enable_schedule_overlap())
+        .enable_cache_upload(options_.enable_cache_upload());
+
     if (options_.device_ip().has_value()) {
       spec_options.device_ip(options_.device_ip().value());
     }
@@ -165,7 +180,14 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
         .transfer_listen_port(options_.transfer_listen_port())
         .enable_disagg_pd(options_.enable_disagg_pd())
         .enable_service_routing(options_.enable_service_routing())
-        .enable_schedule_overlap(options_.enable_schedule_overlap());
+        .enable_schedule_overlap(options_.enable_schedule_overlap())
+        .enable_cache_upload(options_.enable_cache_upload())
+        .host_blocks_factor(options_.host_blocks_factor())
+        .enable_kvcache_store(options_.enable_kvcache_store())
+        .store_protocol(options_.store_protocol())
+        .store_master_server_entry(options_.store_master_server_entry())
+        .store_metadata_connstring(options_.store_metadata_connstring());
+
     if (options_.device_ip().has_value()) {
       eng_options.device_ip(options_.device_ip().value());
     }

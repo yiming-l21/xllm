@@ -60,6 +60,20 @@ message PullKVCacheRequest {
   repeated uint64 dst_blocks = 5;
 }
 
+message CacheBlockInfo {
+  int32 device_block_id = 1;
+  int32 host_block_id = 2;
+  bytes hash_key = 3;
+}
+
+message CacheBlockInfos {
+  repeated CacheBlockInfo contents = 1;
+}
+
+message StoreResponse {
+ uint32 success_cnt = 1;
+}
+
 message DeviceInfo {
   string device_ip = 1;
   uint32 listen_port = 2;
@@ -98,6 +112,12 @@ message TransferKVInfo {
   InstanceInfo remote_instance_info = 5;
 }
 
+message EplbInfo {
+  int32 prepare_layer_id = 1;
+  repeated int32 expert_ids = 2;
+  int32 update_layer_id = 3;
+};
+
 message RequestSamplingParam {
   float frequency_penalty = 1;
   float presence_penalty = 2;
@@ -121,6 +141,11 @@ message UniqueTokenCounts {
 
 message BlockTables {
   repeated int32 block_tables = 1;
+}
+
+message BlockPair {
+  int32 device_block_id = 1;
+  int32 host_block_id = 2;
 }
 
 message ForwardInput {
@@ -155,6 +180,10 @@ message ForwardInput {
   repeated Embeddings embeds = 23;
   uint32 prefill_seq_len = 24;
   repeated int32 embedding_ids = 25;
+  EplbInfo eplb_info =26;
+  repeated CacheBlockInfo async_copy_out_blocks = 27;
+  repeated CacheBlockInfo copy_out_blocks = 28;
+  repeated CacheBlockInfo copy_in_blocks = 29;
 }
 
 message Embeddings {
@@ -178,6 +207,8 @@ message SquenceOutput {
 
 message ForwardOutput {
   repeated SquenceOutput outputs = 2;
+  repeated int64 expert_load_data = 3;
+  int32 prepared_layer_id = 4;
 }
 
 // master create Collective service
@@ -202,4 +233,5 @@ service DistributeWorker {
   rpc ExecuteModel (ForwardInput) returns (ForwardOutput);
   rpc GetLastStepResult (Empty) returns (ForwardOutput);
   rpc GetActiveActivationMemory (Empty) returns (ActivationMemory);
+  rpc LoadKVCacheFromStore(CacheBlockInfos) returns (StoreResponse) {}
 }

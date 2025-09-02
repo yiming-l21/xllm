@@ -88,6 +88,7 @@ WorkerImpl::WorkerImpl(const ParallelArgs& parallel_args,
   std::string device_name = "npu:" + std::to_string(currentDevId);
   torch_npu::init_npu(device_name);
   npu_stream_helper_ = std::make_unique<NPUStreamHelper>();
+  extra_stream_helper_ = std::make_unique<NPUStreamHelper>();
 #elif defined(USE_MLU)
   // TODO(mlu): implement mlu init context
 #endif
@@ -120,6 +121,48 @@ bool WorkerImpl::allocate_kv_cache(
         torch::empty(kv_cache_shape[1], torch::dtype(dtype_).device(device_));
 #endif
     kv_caches_.emplace_back(key_cache, value_cache);
+  }
+
+  allocate_host_kv_cache(kv_cache_shape);
+  status_ = Status::READY;
+  return true;
+}
+
+bool WorkerImpl::allocate_host_kv_cache(
+    const std::vector<std::vector<int64_t>>& device_kv_cache_shape) {
+  if (options_.host_blocks_factor() <= 0.00001) {
+    return true;
+  }
+
+  CHECK(model_ != nullptr) << "Model is not initialized.";
+  CHECK(host_kv_caches_.empty()) << "KV caches are already initialized.";
+
+  std::vector<std::vector<int64_t>> host_kv_cache_shape = device_kv_cache_shape;
+  host_kv_cache_shape[0][0] =
+      device_kv_cache_shape[0][0] * options_.host_blocks_factor();
+  host_kv_cache_shape[1][0] =
+      device_kv_cache_shape[1][0] * options_.host_blocks_factor();
+
+  // create a KVCache for each layer
+  const int64_t num_layers = context_.get_model_args().n_layers();
+  kv_caches_.reserve(num_layers);
+  for (int64_t i = 0; i < num_layers; ++i) {
+    torch::Tensor key_cache, value_cache;
+    key_cache = torch::empty(host_kv_cache_shape[0],
+                             torch::dtype(dtype_).device(torch::kCPU));
+    value_cache = torch::empty(host_kv_cache_shape[1],
+                               torch::dtype(dtype_).device(torch::kCPU));
+    host_kv_caches_.emplace_back(key_cache, value_cache);
+  }
+
+  if (options_.enable_kvcache_store()) {
+    StoreConfig config;
+    config.protocol = options_.store_protocol();
+    config.metadata_connstring = options_.store_metadata_connstring();
+    config.master_server_entry = options_.store_master_server_entry();
+    config.tp_rank = options_.node_rank() % options_.dp_size();
+
+    kv_cache_store_ = std::make_shared<KVCacheStore>(config, &host_kv_caches_);
   }
 
   status_ = Status::READY;
@@ -157,6 +200,7 @@ bool WorkerImpl::allocate_kv_cache_with_transfer(
   }
 #endif
 
+  allocate_host_kv_cache(kv_cache_shape);
   status_ = Status::READY;
   return true;
 }
@@ -181,6 +225,7 @@ bool WorkerImpl::allocate_kv_cache_with_transfer(
         kv_caches_, num_layers, kv_cache_shape, dtype_);
   }
 
+  allocate_host_kv_cache(kv_cache_shape);
   status_ = Status::READY;
   return true;
 }
@@ -289,6 +334,9 @@ void WorkerImpl::update_last_step_output(
     last_step_output_ = std::move(output.value());
     last_step_output_valid_ = true;
   } else {
+    if (FLAGS_enable_eplb) {
+      last_step_output_ = std::move(output.value());
+    }
     last_step_output_valid_ = false;
   }
 }
@@ -315,6 +363,33 @@ void WorkerImpl::prepare_work_before_execute(const ForwardInput& inputs,
   c10::StreamGuard streamGuard(npu_stream_helper_->H2D_memcpy_stream.unwrap());
   processed_inputs = inputs.to(device_, dtype_);
 
+  auto& input_params = processed_inputs.input_params;
+  if (input_params.copy_out_blocks.size() > 0 ||
+      input_params.copy_in_blocks.size() > 0) {
+    const int64_t num_layers = context_.get_model_args().n_layers();
+    for (int layer_id = 0; layer_id < num_layers; layer_id++) {
+      auto key_cache = kv_caches_[layer_id].get_k_cache();
+      auto host_k_cache = host_kv_caches_[layer_id].get_k_cache();
+      auto value_cache = kv_caches_[layer_id].get_v_cache();
+      auto host_v_cache = host_kv_caches_[layer_id].get_v_cache();
+
+      for (auto block_info : input_params.copy_out_blocks) {
+        host_k_cache[block_info.host_block_id].copy_(
+            key_cache[block_info.device_block_id]);
+        host_v_cache[block_info.host_block_id].copy_(
+            value_cache[block_info.device_block_id]);
+      }
+      for (auto block_info : input_params.copy_in_blocks) {
+        key_cache[block_info.device_block_id].copy_(
+            host_k_cache[block_info.host_block_id]);
+        value_cache[block_info.device_block_id].copy_(
+            host_v_cache[block_info.host_block_id]);
+      }
+    }
+
+    offload_kv_blocks_to_store_async(inputs.input_params.copy_out_blocks);
+  }
+
   if (!context_.get_parallel_args().mapping_data().empty()) {
     torch::Tensor token_size_per_dp_group =
         torch::tensor(processed_inputs.input_params.dp_global_token_nums,
@@ -328,11 +403,56 @@ void WorkerImpl::prepare_work_before_execute(const ForwardInput& inputs,
                               context_.get_model_args().num_experts_per_tok(),
                               context_.get_parallel_args().mapping_data(),
                               device_,
+                              dtype_,
                               is_prefill);
     processed_inputs.input_params.dp_ep_padding_data = dp_ep_padding.build();
+    if (FLAGS_enable_eplb) {
+      // expert_load_data_.fill_(0);
+      processed_inputs.input_params.expert_load_data = expert_load_data_;
+    }
   }
   aclrtSynchronizeStream(npu_stream_helper_->H2D_memcpy_stream.stream());
 #endif
+}
+
+folly::SemiFuture<bool> WorkerImpl::copy_out_blocks_async(
+    ModelInputParams& input_params) {
+  folly::Promise<bool> promise;
+  auto future = promise.getSemiFuture();
+#if defined(USE_NPU)
+  general_threadpool_.schedule([this,
+                                input_params = input_params,
+                                promise = std::move(promise)]() mutable {
+    c10::StreamGuard streamGuard(
+        extra_stream_helper_->H2D_memcpy_stream.unwrap());
+    if (input_params.async_copy_out_blocks.size() > 0) {
+      const int64_t num_layers = context_.get_model_args().n_layers();
+      for (int layer_id = 0; layer_id < num_layers; layer_id++) {
+        auto key_cache = kv_caches_[layer_id].get_k_cache();
+        auto host_k_cache = host_kv_caches_[layer_id].get_k_cache();
+        auto value_cache = kv_caches_[layer_id].get_v_cache();
+        auto host_v_cache = host_kv_caches_[layer_id].get_v_cache();
+
+        for (auto block_info : input_params.async_copy_out_blocks) {
+          host_k_cache[block_info.host_block_id].copy_(
+              key_cache[block_info.device_block_id]);
+          host_v_cache[block_info.host_block_id].copy_(
+              value_cache[block_info.device_block_id]);
+        }
+      }
+
+      offload_kv_blocks_to_store(input_params.async_copy_out_blocks);
+    }
+    auto ret = aclrtSynchronizeStream(
+        extra_stream_helper_->H2D_memcpy_stream.stream());
+    promise.setValue(ret == 0);
+  });
+#elif defined(USE_MLU)
+  // TODO(mlu): implement mlu device set
+  promise.setValue(false);
+#endif
+
+  return future;
 }
 
 folly::SemiFuture<std::optional<ForwardOutput>> WorkerImpl::step_async(
@@ -346,8 +466,10 @@ folly::SemiFuture<std::optional<ForwardOutput>> WorkerImpl::step_async(
                         inputs = forward_inputs_on_device,
                         promise = std::move(promise)]() mutable {
     // run the model on the given input in working thread
+    auto copy_future = copy_out_blocks_async(inputs.input_params);
     if (!enable_schedule_overlap()) {
       const auto output = this->step(inputs);
+      std::move(copy_future).get();
       promise.setValue(output);
     } else {
       if (last_step_output_valid_ && !inputs.input_params.empty_kv_cache) {
@@ -356,7 +478,7 @@ folly::SemiFuture<std::optional<ForwardOutput>> WorkerImpl::step_async(
       }
       const auto output = this->step(inputs);
       if (output.has_value()) {
-        if (is_driver()) {
+        if (is_driver() || FLAGS_enable_eplb) {
           std::unique_lock<std::mutex> lock(mtx_);
           cv_.wait(lock, [this] { return !is_recorded_; });
           update_last_step_output(output);
@@ -366,7 +488,7 @@ folly::SemiFuture<std::optional<ForwardOutput>> WorkerImpl::step_async(
           update_last_step_output(output);
         }
       } else {
-        if (is_driver()) {
+        if (is_driver() || FLAGS_enable_eplb) {
           std::unique_lock<std::mutex> lock(mtx_);
           cv_.wait(lock, [this] { return !is_recorded_; });
           last_step_output_valid_ = false;
@@ -376,6 +498,7 @@ folly::SemiFuture<std::optional<ForwardOutput>> WorkerImpl::step_async(
           last_step_output_valid_ = false;
         }
       }
+      std::move(copy_future).get();
       promise.setValue(output);
     }
   });
@@ -386,7 +509,7 @@ ForwardOutput WorkerImpl::get_last_step_result() {
   ForwardOutput output;
   std::unique_lock<std::mutex> lock(mtx_);
   cv_.wait(lock, [this] { return is_recorded_; });
-  if (last_step_output_valid_) {
+  if (last_step_output_valid_ || FLAGS_enable_eplb) {
     output = last_step_output_;
   }
   is_recorded_ = false;
@@ -454,6 +577,16 @@ bool WorkerImpl::init_model(const std::string& model_weights_path) {
   this->load_model(std::move(model_loader));
 
   status_ = Status::LOADED;
+  if (FLAGS_enable_eplb) {
+    int32_t num_layers = args.n_layers() - args.first_k_dense_replace();
+    int32_t num_device_experts =
+        args.n_routed_experts() / context_.get_parallel_args().world_size() +
+        FLAGS_redundant_experts_num;
+    expert_load_data_ = torch::zeros({num_layers, num_device_experts})
+                            .to(torch::kInt64)
+                            .to(device_)
+                            .contiguous();
+  }
   return true;
 }
 
@@ -490,6 +623,44 @@ folly::SemiFuture<bool> WorkerImpl::pull_kv_blocks_async(
                                                   dst_blocks);
 #endif
   return false;
+}
+
+folly::SemiFuture<uint32_t> WorkerImpl::load_kv_blocks_from_store_async(
+    const std::vector<CacheBlockInfo>& cache_block_info) {
+  folly::Promise<uint32_t> promise;
+  auto future = promise.getSemiFuture();
+  general_threadpool_.schedule(
+      [this, &cache_block_info, promise = std::move(promise)]() mutable {
+        if (this->kv_cache_store_ == nullptr) {
+          promise.setValue(0);
+          return;
+        }
+        promise.setValue(this->kv_cache_store_->batch_get(cache_block_info));
+      });
+  return future;
+}
+
+uint32_t WorkerImpl::offload_kv_blocks_to_store(
+    const std::vector<CacheBlockInfo>& cache_block_info) {
+  if (kv_cache_store_ == nullptr) {
+    return 0;
+  }
+  return kv_cache_store_->batch_put(cache_block_info);
+}
+
+folly::SemiFuture<uint32_t> WorkerImpl::offload_kv_blocks_to_store_async(
+    const std::vector<CacheBlockInfo>& cache_block_info) {
+  folly::Promise<uint32_t> promise;
+  auto future = promise.getSemiFuture();
+  general_threadpool_.schedule(
+      [this, &cache_block_info, promise = std::move(promise)]() mutable {
+        if (this->kv_cache_store_ == nullptr) {
+          promise.setValue(0);
+          return;
+        }
+        promise.setValue(this->kv_cache_store_->batch_put(cache_block_info));
+      });
+  return future;
 }
 
 folly::SemiFuture<bool> WorkerImpl::allocate_kv_cache_with_transfer_async(

@@ -21,9 +21,8 @@ limitations under the License.
 
 #include "acl/acl.h"
 #include "aclnn_apply_top_k_top_p.h"
+#include "acltensor_utils.h"
 #include "util/tensor_helper.h"
-#include "utils/tensor_checks.h"
-#include "utils/tensor_utils.h"
 
 namespace xllm_ops {
 void top_k_top_p(torch::Tensor& logits,

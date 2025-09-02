@@ -70,6 +70,14 @@ class Options {
   // thread num to handle requests
   PROPERTY(size_t, num_handling_threads) = 4;
 
+  PROPERTY(std::optional<bool>, enable_eplb);
+
+  PROPERTY(std::optional<int32_t>, redundant_experts_num);
+
+  PROPERTY(std::optional<int64_t>, eplb_update_interval);
+
+  PROPERTY(std::optional<double>, eplb_update_threshold);
+
   PROPERTY(std::optional<std::string>, communication_backend);
 
   PROPERTY(std::optional<std::string>, rank_tablefile);
@@ -113,6 +121,22 @@ class Options {
   PROPERTY(bool, enable_service_routing) = false;
 
   PROPERTY(std::optional<std::string>, tool_call_parser);
+
+  PROPERTY(std::string, priority_strategy) = "FCFS";
+
+  PROPERTY(bool, enable_online_preempt_offline) = true;
+
+  PROPERTY(double, host_blocks_factor) = 0.0;
+
+  PROPERTY(bool, enable_kvcache_store) = false;
+
+  PROPERTY(bool, enable_cache_upload) = false;
+
+  PROPERTY(std::string, store_protocol) = "tcp";
+
+  PROPERTY(std::string, store_master_server_entry) = "";
+
+  PROPERTY(std::string, store_metadata_connstring) = "";
 };
 
 }  // namespace xllm

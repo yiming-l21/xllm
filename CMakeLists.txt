@@ -21,13 +21,16 @@ if(USE_NPU)
       set(USE_A2 ON)
       message(STATUS "Building for device: A2 (macro USE_A2 defined)")
   endif()
+  if(USE_A2)
+    execute_process(
+      COMMAND git -C "${CMAKE_SOURCE_DIR}/third_party/xllm_ops" rev-parse HEAD
+      OUTPUT_VARIABLE XLLM_OPS_GIT_HEAD
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
 
-  option(PRECOMPILE_XLLM_OPS "Precompile xllm ops before main build" ON)
-  if(PRECOMPILE_XLLM_OPS)
-    set(XLLM_OPS_MARKER "${CMAKE_BINARY_DIR}/xllm_ops_compiled.marker")
-  
-    if(NOT EXISTS ${XLLM_OPS_MARKER})
-      message(STATUS "Precompiling xllm ops (first time)...")
+    if(NOT DEFINED XLLM_OPS_GIT_HEAD_CACHED OR NOT XLLM_OPS_GIT_HEAD STREQUAL XLLM_OPS_GIT_HEAD_CACHED)
+      message(STATUS "xllm_ops git HEAD changed; running precompile via execute_process")
       execute_process(
         COMMAND bash ${CMAKE_SOURCE_DIR}/third_party/xllm_ops/build.sh
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/xllm_ops
@@ -36,11 +39,10 @@ if(USE_NPU)
       if(NOT XLLM_OPS_RESULT EQUAL 0)
         message(FATAL_ERROR "Failed to precompile xllm ops, error code: ${XLLM_OPS_RESULT}")
       endif()
-    
-      file(TOUCH ${XLLM_OPS_MARKER})
-      message(STATUS "xllm ops precompiled successfully")
+      set(XLLM_OPS_GIT_HEAD_CACHED "${XLLM_OPS_GIT_HEAD}" CACHE INTERNAL "" FORCE)
+      message(STATUS "xllm ops precompiled and HEAD cache updated")
     else()
-      message(STATUS "xllm ops already compiled, skipping...")
+      message(STATUS "xllm_ops git HEAD unchanged; skipping precompile")
     endif()
   endif()
 endif()
@@ -68,9 +70,9 @@ option(USE_CCACHE "Attempt using CCache to wrap the compilation" ON)
 # option(USE_CXX11_ABI "Use the new C++-11 ABI, which is not backwards compatible." OFF)
 option(USE_MANYLINUX "Build for manylinux" OFF)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 if(USE_NPU)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
@@ -220,6 +222,7 @@ find_package(GTest CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED)
+find_package(Python COMPONENTS Development REQUIRED)
 
 if (USE_MANYLINUX)
   # manylinux doesn't ship Development.Embed
