@@ -40,4 +40,16 @@ class CompletionServiceImpl final : public APIServiceImpl<CompletionCall> {
   DISALLOW_COPY_AND_ASSIGN(CompletionServiceImpl);
 };
 
+class FLUXCompletionServiceImpl final : public APIServiceImpl<CompletionCall> {
+ public:
+  FLUXCompletionServiceImpl(FLUXMaster* master,
+                            const std::vector<std::string>& models);
+
+  // brpc call_data needs to use shared_ptr
+  void process_async_impl(std::shared_ptr<CompletionCall> call);
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(FLUXCompletionServiceImpl);
+};
+
 }  // namespace xllm

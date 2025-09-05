@@ -37,13 +37,13 @@ limitations under the License.
 
 namespace xllm {
 
-class LLMEngine : public Engine {
+class FLUXEngine : public Engine {
  public:
   // create an engine with the given devices
-  LLMEngine(const runtime::Options& options,
-            std::shared_ptr<DistManager> dist_manager = nullptr);
+  FLUXEngine(const runtime::Options& options,
+             std::shared_ptr<DistManager> dist_manager = nullptr);
 
-  virtual ~LLMEngine() = default;
+  virtual ~FLUXEngine() = default;
 
   ForwardOutput step(std::vector<Batch>& batch) override;
 

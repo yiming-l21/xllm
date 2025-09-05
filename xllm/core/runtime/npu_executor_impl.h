@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "common/macros.h"
 #include "framework/kv_cache/kv_cache.h"
+#include "framework/model/causal_flux.h"
 #include "framework/model/causal_lm.h"
 #include "framework/model/model_input_params.h"
 #include "runtime/executor_impl.h"
@@ -31,10 +32,14 @@ namespace xllm {
 
 class NpuExecutorImpl : public ExecutorImpl {
  public:
-  NpuExecutorImpl(CausalLM* model,
-                  const ModelArgs& args,
-                  const torch::Device& device,
-                  const runtime::Options& options);
+  explicit NpuExecutorImpl(CausalLM* model,
+                           const ModelArgs& args,
+                           const torch::Device& device,
+                           const runtime::Options& options);
+  explicit NpuExecutorImpl(CausalFLUX* model,
+                           const ModelArgs& args,
+                           const torch::Device& device,
+                           const runtime::Options& options);
 
   ~NpuExecutorImpl() override = default;
 
@@ -47,8 +52,8 @@ class NpuExecutorImpl : public ExecutorImpl {
 
  private:
   // not own
-  CausalLM* model_;
-
+  CausalLM* model_ = nullptr;
+  CausalFLUX* flux_model_ = nullptr;
   ModelArgs args_;
   torch::Device device_;
   runtime::Options options_;

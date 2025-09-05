@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "llm_worker_impl.h"
+#include "flux_worker_impl.h"
 
 #include <c10/core/Device.h>
 #include <c10/core/DeviceGuard.h>
@@ -48,15 +48,15 @@ limitations under the License.
 
 namespace xllm {
 
-LLMWorkerImpl::LLMWorkerImpl(const ParallelArgs& parallel_args,
-                             const torch::Device& device,
-                             const runtime::Options& options)
+FLUXWorkerImpl::FLUXWorkerImpl(const ParallelArgs& parallel_args,
+                               const torch::Device& device,
+                               const runtime::Options& options)
     : WorkerImpl(parallel_args, device, options) {}
 
-bool LLMWorkerImpl::init_model(torch::ScalarType dtype,
-                               const ModelArgs& model_args,
-                               const QuantArgs& quant_args) {
-  CHECK(model_ == nullptr) << "Model is already initialized.";
+bool FLUXWorkerImpl::init_model(torch::ScalarType dtype,
+                                const ModelArgs& model_args,
+                                const QuantArgs& quant_args) {
+  CHECK(flux_model_ == nullptr) << "Model is already initialized.";
 #if defined(USE_NPU)
   int currentDevId = device_.index();
   int ret = aclrtSetDevice(currentDevId);
@@ -74,18 +74,16 @@ bool LLMWorkerImpl::init_model(torch::ScalarType dtype,
   dtype_ = dtype;
   context_.set_tensor_options(torch::dtype(dtype_).device(device_));
   // Try to create a causal LM model
-  model_ = create_llm_model(context_);
+  flux_model_ = create_flux_model(context_);
 
   // Dont find model in causal models
-  CHECK(model_ != nullptr) << "Failed to create model.";
-  model_executor_ =
-      std::make_unique<Executor>(model_.get(), model_args, device_, options_);
-
-  eplb_executor_ = std::make_unique<EplbExecutor>(model_.get());
+  CHECK(flux_model_ != nullptr) << "Failed to create model.";
+  model_executor_ = std::make_unique<Executor>(
+      flux_model_.get(), model_args, device_, options_);
   return true;
 }
 
-std::optional<ForwardOutput> LLMWorkerImpl::step(const ForwardInput& inputs) {
+std::optional<ForwardOutput> FLUXWorkerImpl::step(const ForwardInput& inputs) {
 #if defined(USE_NPU)
   c10_npu::SetDevice(device_.index());
 #elif defined(USE_MLU)
@@ -96,10 +94,6 @@ std::optional<ForwardOutput> LLMWorkerImpl::step(const ForwardInput& inputs) {
   auto& flatten_positions = inputs.positions;
   auto& params = inputs.input_params;
   auto& sampling_params = inputs.sampling_params;
-
-  if (FLAGS_enable_eplb) {
-    eplb_executor_->eplb_execute(inputs.eplb_info);
-  }
   std::vector<folly::SemiFuture<bool>> futures;
   if (options_.instance_role() == InstanceRole::PREFILL &&
       options_.kv_cache_transfer_mode() == "PUSH" &&
@@ -123,20 +117,13 @@ std::optional<ForwardOutput> LLMWorkerImpl::step(const ForwardInput& inputs) {
   auto hidden_states = model_executor_->forward(
       flatten_tokens, flatten_positions, kv_caches_, params);
 
-  torch::Tensor logits;
-  if (sampling_params.selected_token_idxes.defined()) {
-    logits =
-        model_->logits(hidden_states, sampling_params.selected_token_idxes);
-  }
+  // torch::Tensor logits;
+  // if (sampling_params.selected_token_idxes.defined()) {
+  //   logits =
+  //       model_->logits(hidden_states, sampling_params.selected_token_idxes);
+  // }
 
   ForwardOutput output;
-  if (FLAGS_enable_eplb) {
-    output.expert_load_data = expert_load_data_;
-    output.prepared_layer_id = eplb_executor_->get_ready_layer_id();
-    if (output.prepared_layer_id != -1) {
-      eplb_executor_->reset_ready_layer_id();
-    }
-  }
   if (!enable_schedule_overlap() && !driver_ && !dp_driver_ &&
       !options_.enable_speculative_decode()) {
 #if defined(USE_NPU)
@@ -158,36 +145,34 @@ std::optional<ForwardOutput> LLMWorkerImpl::step(const ForwardInput& inputs) {
         }
       }
     }
-    if (FLAGS_enable_eplb) {
-      return output;
-    }
     return std::nullopt;
   }
 
   // driver prepare model output
-  SampleOutput sample_output;
-  if (sampling_params.selected_token_idxes.defined()) {
-    sample_output = sampler_->forward(logits, sampling_params);
-    output.logits = logits;
+  // SampleOutput sample_output;
+  // if (sampling_params.selected_token_idxes.defined()) {
+  //   sample_output = sampler_->forward(logits, sampling_params);
+  //   output.logits = logits;
 
-    if (options_.enable_speculative_decode()) {
-      if (params.empty_kv_cache) {
-        sample_output.embeddings = hidden_states;
-      } else {
-        auto sample_idxes = sampling_params.selected_token_idxes.index_select(
-            /*dim=*/0, sampling_params.sample_idxes);
-        auto embeddings = hidden_states.index_select(/*dim=*/0, sample_idxes);
-        sample_output.embeddings = embeddings;
-      }
-    }
+  //   if (options_.enable_speculative_decode()) {
+  //     if (params.empty_kv_cache) {
+  //       sample_output.embeddings = hidden_states;
+  //     } else {
+  //       auto sample_idxes =
+  //       sampling_params.selected_token_idxes.index_select(
+  //           /*dim=*/0, sampling_params.sample_idxes);
+  //       auto embeddings = hidden_states.index_select(/*dim=*/0,
+  //       sample_idxes); sample_output.embeddings = embeddings;
+  //     }
+  //   }
 
-    // set sample output to output
-    output.sample_output = sample_output;
-    // carry over the sampling params
-    output.do_sample = sampling_params.do_sample;
-    output.logprobs = sampling_params.logprobs;
-    output.max_top_logprobs = sampling_params.max_top_logprobs;
-  }
+  //   // set sample output to output
+  //   output.sample_output = sample_output;
+  //   // carry over the sampling params
+  //   output.do_sample = sampling_params.do_sample;
+  //   output.logprobs = sampling_params.logprobs;
+  //   output.max_top_logprobs = sampling_params.max_top_logprobs;
+  // }
 
 #if defined(USE_NPU)
   aclrtSynchronizeStream(

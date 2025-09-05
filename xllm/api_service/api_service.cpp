@@ -24,6 +24,7 @@ limitations under the License.
 #include "chat.pb.h"
 #include "completion.pb.h"
 #include "core/common/metrics.h"
+#include "core/runtime/flux_master.h"
 #include "core/runtime/llm_master.h"
 #include "core/runtime/vlm_master.h"
 #include "core/util/closure_guard.h"
@@ -52,6 +53,10 @@ APIService::APIService(Master* master,
     auto vlm_master = dynamic_cast<VLMMaster*>(master);
     mm_chat_service_impl_ =
         std::make_unique<MMChatServiceImpl>(vlm_master, model_names);
+  } else if (FLAGS_backend == "flux") {
+    auto flux_master = dynamic_cast<FLUXMaster*>(master);
+    flux_completion_service_impl_ =
+        std::make_unique<FLUXCompletionServiceImpl>(flux_master, model_names);
   }
   models_service_impl_ =
       ServiceImplFactory<ModelsServiceImpl>::create_service_impl(
@@ -96,7 +101,11 @@ void APIService::CompletionsHttp(::google::protobuf::RpcController* controller,
 
   std::shared_ptr<Call> call = std::make_shared<CompletionCall>(
       ctrl, done_guard.release(), req_pb, resp_pb);
-  completion_service_impl_->process_async(call);
+  if (FLAGS_backend == "llm") {
+    completion_service_impl_->process_async(call);
+  } else if (FLAGS_backend == "flux") {
+    flux_completion_service_impl_->process_async(call);
+  }
 }
 
 void APIService::ChatCompletions(::google::protobuf::RpcController* controller,

@@ -18,84 +18,95 @@ limitations under the License.
 #include <folly/Function.h>
 
 #include <functional>
+#include <future>
 #include <memory>
-#include <optional>
 #include <string>
-#include <thread>
-#include <variant>
 #include <vector>
 
 #include "common/options.h"
+#include "common/rate_limiter.h"
 #include "framework/chat_template/jinja_chat_template.h"
-#include "framework/request/mm_input_helper.h"
 #include "framework/request/request_output.h"
 #include "framework/request/request_params.h"
-#include "runtime/engine.h"
+#include "runtime/llm_engine.h"
 #include "runtime/master.h"
 #include "scheduler/continuous_scheduler.h"
 #include "util/concurrent_queue.h"
-#include "xllm/processors/input_processor.h"
 
 namespace xllm {
 
-struct MMData;
-class ImageProcessor;
+class Call;
 
-class VLMMaster : public Master {
+class FLUXMaster : public Master {
  public:
-  explicit VLMMaster(const Options& options);
-  ~VLMMaster();
+  explicit FLUXMaster(const Options& options);
+  ~FLUXMaster();
 
-  void handle_request(const std::string& prompt,
-                      const MMData& mm_data,
+  // handle a request, the engine will execute the request asynchronously
+  // completion/encode
+  void handle_request(std::string prompt,
+                      std::optional<std::vector<int>> prompt_tokens,
                       RequestParams sp,
+                      std::optional<Call*> call,
                       OutputCallback callback);
 
   // chat
-  void handle_request(const std::vector<Message>& messages,
-                      const MMInput& mm_inputs,
+  void handle_request(std::vector<Message> messages,
+                      std::optional<std::vector<int>> prompt_tokens,
                       RequestParams sp,
-                      OutputCallback callback);
-
-  // chat
-  void handle_request(const std::vector<Message>& messages,
-                      const MMData& mm_data,
-                      RequestParams sp,
+                      std::optional<Call*> call,
                       OutputCallback callback);
 
   // batch completion
-  void handle_batch_request(const std::vector<std::string>& prompts,
-                            const std::vector<MMData>& mm_datas,
-                            std::vector<RequestParams> sps,
+  void handle_batch_request(std::vector<std::string> prompts,
+                            std::vector<RequestParams> sp,
                             BatchOutputCallback callback);
 
   // batch chat
-  void handle_batch_request(
-      const std::vector<std::vector<Message>>& conversations,
-      const std::vector<MMData>& mm_datas,
-      std::vector<RequestParams> sps,
-      BatchOutputCallback callback);
+  void handle_batch_request(std::vector<std::vector<Message>> conversations,
+                            std::vector<RequestParams> sp,
+                            BatchOutputCallback callback);
 
-  // start the handling loop
+  // start running loop
   void run() override;
 
-  // generate will run all requests, this is an blocking call
+  // generate will run all request done at once,
+  // this is a blocking call
   void generate();
 
+  void get_cache_info(std::vector<uint64_t>& cluster_ids,
+                      std::vector<std::string>& addrs,
+                      std::vector<int64_t>& k_cache_ids,
+                      std::vector<int64_t>& v_cache_ids);
+
+  bool link_cluster(const std::vector<uint64_t>& cluster_ids,
+                    const std::vector<std::string>& addrs,
+                    const std::vector<std::string>& device_ips,
+                    const std::vector<uint16_t>& ports,
+                    const int32_t dp_size);
+
+  bool unlink_cluster(const std::vector<uint64_t>& cluster_ids,
+                      const std::vector<std::string>& addrs,
+                      const std::vector<std::string>& device_ips,
+                      const std::vector<uint16_t>& ports,
+                      const int32_t dp_size);
+
  private:
-  using Task = folly::Function<void()>;
-  std::shared_ptr<Request> generate_request(std::string prompt,
-                                            const MMData& mm_data,
-                                            const RequestParams& sp,
-                                            OutputCallback callback);
-
   std::shared_ptr<Request> generate_request(
-
-      const std::vector<Message>& messages,
-      const MMData& mm_data,
+      std::string prompt,
+      std::optional<std::vector<int>> prompt_tokens,
       const RequestParams& sp,
+      std::optional<Call*> call,
       OutputCallback callback);
 
+  std::shared_ptr<Request> generate_request(
+      const std::vector<Message>& messages,
+      std::optional<std::vector<int>> prompt_tokens,
+      const RequestParams& sp,
+      std::optional<Call*> call,
+      OutputCallback callback);
+
+ private:
   Tokenizer* get_tls_tokenizer();
 
   std::unique_ptr<Scheduler> scheduler_;
@@ -112,11 +123,6 @@ class VLMMaster : public Master {
 
   // chat template instance
   std::unique_ptr<JinjaChatTemplate> chat_template_;
-
-  // input processor for vlm
-  std::unique_ptr<InputProcessor> input_processor_;
-
-  std::unique_ptr<ImageProcessor> image_processor_;
 
   // thread for moving forward the scheduler
   std::thread loop_thread_;

@@ -101,13 +101,14 @@ WorkerClient::estimate_kv_cache_capacity_async() {
 
 folly::SemiFuture<std::optional<ForwardOutput>> WorkerClient::step_async(
     const ForwardInput& inputs) {
+  LOG(INFO) << "WorkerClient::step_async called.";
   return worker_->step_async(inputs);
 }
 
 folly::SemiFuture<std::optional<RawForwardOutput>> WorkerClient::step_async(
     const RawForwardInput& inputs) {
-  LOG(ERROR) << "Worker Method step_async with RawForwardInput param is "
-                "UnImplemented.";
+  LOG(INFO) << "Worker Method step_async with RawForwardInput param is "
+               "UnImplemented.";
 }
 
 folly::SemiFuture<folly::Unit> WorkerClient::process_group_test_async() {

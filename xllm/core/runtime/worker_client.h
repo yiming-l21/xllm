@@ -19,6 +19,7 @@ limitations under the License.
 #include <torch/torch.h>
 
 #include "forward_params.h"
+#include "framework/model/causal_flux.h"
 #include "framework/model/causal_lm.h"
 #include "framework/model/embedding_lm.h"
 #include "framework/model/model_args.h"

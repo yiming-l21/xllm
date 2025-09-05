@@ -33,6 +33,7 @@ class WorkerType {
     INVALID = 0,
     LLM,   // LLM
     VLM,   // VLM
+    FLUX,  // FLUX
     ELM,   // Embedding LM
     EVLM,  // Embedding VLM
   };
@@ -43,6 +44,8 @@ class WorkerType {
       value_ = LLM;
     } else if (str == "VLM") {
       value_ = VLM;
+    } else if (str == "FLUX") {
+      value_ = FLUX;
     } else if (str == "ELM") {
       value_ = ELM;
     } else if (str == "EVLM") {
@@ -67,6 +70,8 @@ class WorkerType {
       return "LLM";
     } else if (this->value_ == VLM) {
       return "VLM";
+    } else if (this->value_ == FLUX) {
+      return "FLUX";
     } else if (this->value_ == ELM) {
       return "ELM";
     } else if (this->value_ == EVLM) {

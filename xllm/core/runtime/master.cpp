@@ -31,6 +31,8 @@ limitations under the License.
 #include "framework/model/model_args.h"
 #include "framework/request/request.h"
 #include "models/model_registry.h"
+#include "runtime/flux_engine.h"
+#include "runtime/flux_master.h"
 #include "runtime/llm_engine.h"
 #include "runtime/llm_master.h"
 #include "runtime/speculative_engine.h"
@@ -54,7 +56,7 @@ namespace xllm {
 
 Master::Master(const Options& options, EngineType type) : options_(options) {
   LOG(INFO) << "Master init options: " << options.to_string();
-
+  LOG(INFO) << "Master init engine type: " << static_cast<size_t>(type);
 #if defined(USE_NPU)
   if (options.rank_tablefile().has_value()) {
     FLAGS_rank_tablefile = options.rank_tablefile().value();
@@ -113,6 +115,40 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
 
     auto engine = std::make_unique<VLMEngine>(eng_options);
     engine_ = std::move(engine);
+  } else if (type == EngineType::FLUX) {
+    runtime::Options eng_options;
+    eng_options.model_path(options_.model_path())
+        .devices(devices)
+        .block_size(options_.block_size())
+        .max_cache_size(options_.max_cache_size())
+        .max_memory_utilization(options_.max_memory_utilization())
+        .enable_prefix_cache(options_.enable_prefix_cache())
+        .task_type(options_.task_type())
+        .enable_mla(options_.enable_mla())
+        .master_node_addr(options_.master_node_addr())
+        .nnodes(options_.nnodes())
+        .node_rank(options_.node_rank())
+        .dp_size(options_.dp_size())
+        .ep_size(options_.ep_size())
+        .enable_chunked_prefill(options_.enable_chunked_prefill())
+        .max_seqs_per_batch(options_.max_seqs_per_batch())
+        .max_tokens_per_chunk_for_prefill(
+            options_.max_tokens_per_chunk_for_prefill())
+        .instance_role(options_.instance_role())
+        .kv_cache_transfer_mode(options_.kv_cache_transfer_mode())
+        .transfer_listen_port(options_.transfer_listen_port())
+        .enable_disagg_pd(options_.enable_disagg_pd())
+        .enable_service_routing(options_.enable_service_routing())
+        .enable_schedule_overlap(options_.enable_schedule_overlap())
+        .enable_cache_upload(options_.enable_cache_upload())
+        .host_blocks_factor(options_.host_blocks_factor())
+        .enable_kvcache_store(options_.enable_kvcache_store())
+        .store_protocol(options_.store_protocol())
+        .store_master_server_entry(options_.store_master_server_entry())
+        .store_metadata_connstring(options_.store_metadata_connstring());
+    LOG(INFO) << "Creating FLUXEngine with options: ";
+    auto engine = std::make_unique<FLUXEngine>(eng_options);
+    engine_ = std::move(engine);
   } else if (type == EngineType::SSM) {
     // create a speculative engine if draft model path is provided
     const auto draft_model_path = options_.draft_model_path().value_or("");
@@ -157,6 +193,7 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
     auto spec_engine = std::make_unique<SpeculativeEngine>(spec_options);
     engine_ = std::move(spec_engine);
   } else if (type == EngineType::LLM) {
+    LOG(INFO) << "Creating LLMEngine with options: ";
     runtime::Options eng_options;
     eng_options.model_path(options_.model_path())
         .devices(devices)
@@ -200,10 +237,16 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
 
 std::unique_ptr<Master> create_master(const std::string& backend,
                                       const Options& options) {
+  LOG(INFO) << backend << options.master_node_addr().value_or("empty");
   if (backend == "llm") {
+    LOG(INFO) << "in xllm.cpp, backend is llm";
     return std::make_unique<LLMMaster>(options);
   } else if (backend == "vlm") {
+    LOG(INFO) << "in xllm.cpp, backend is vlm";
     return std::make_unique<VLMMaster>(options);
+  } else if (backend == "flux") {
+    LOG(INFO) << "in xllm.cpp, backend is flux";
+    return std::make_unique<FLUXMaster>(options);
   } else {
     LOG(FATAL) << "Failed to create master, backend is" << backend;
     return nullptr;

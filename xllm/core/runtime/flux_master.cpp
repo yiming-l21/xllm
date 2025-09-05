@@ -13,24 +13,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "vlm_master.h"
+#include "flux_master.h"
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <pybind11/pybind11.h>
 
 #include <atomic>
+#include <boost/algorithm/string.hpp>
+#include <csignal>
 #include <memory>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "api_service/call.h"
 #include "common/metrics.h"
 #include "framework/model/model_args.h"
-#include "framework/request/mm_data.h"
 #include "framework/request/request.h"
 #include "models/model_registry.h"
 #include "runtime/speculative_engine.h"
-#include "runtime/vlm_engine.h"
 #include "runtime/xservice_client.h"
 #include "scheduler/scheduler_factory.h"
 #include "server/xllm_server_registry.h"
@@ -43,11 +45,10 @@ limitations under the License.
 #include "util/timer.h"
 
 namespace xllm {
-
-VLMMaster::VLMMaster(const Options& options)
-    : Master(options, EngineType::VLM) {
+FLUXMaster::FLUXMaster(const Options& options)
+    : Master(options, EngineType::FLUX) {
+  LOG(INFO) << "FLUX Engine initialized. in flux_master.cpp";
   CHECK(engine_->init());
-
   model_args_ = engine_->model_args();
 
   bool enable_decode_response_to_service = false;
@@ -66,11 +67,14 @@ VLMMaster::VLMMaster(const Options& options)
   }
 
   ContinuousScheduler::Options scheduler_options;
-  scheduler_options.max_tokens_per_batch(options.max_tokens_per_batch())
-      .max_seqs_per_batch(options.max_seqs_per_batch())
+  scheduler_options.max_tokens_per_batch(options_.max_tokens_per_batch())
+      .max_seqs_per_batch(options_.max_seqs_per_batch())
       .max_tokens_per_chunk_for_prefill(
-          options.max_tokens_per_chunk_for_prefill())
+          options_.max_tokens_per_chunk_for_prefill())
+      .num_speculative_tokens(options_.num_speculative_tokens())
+      .dp_size(options_.dp_size())
       .enable_disagg_pd(options_.enable_disagg_pd())
+      .enable_schedule_overlap(options_.enable_schedule_overlap())
       .enable_chunked_prefill(options_.enable_chunked_prefill())
       .instance_role(options_.instance_role())
       .kv_cache_transfer_mode(options_.kv_cache_transfer_mode())
@@ -90,7 +94,7 @@ VLMMaster::VLMMaster(const Options& options)
 
       case InstanceRole::PREFILL:
         instance_info.rpc_address = ServerRegistry::get_instance()
-                                        .get_server("DisaggPrefillServer")
+                                        .get_server("DisaggPDServer")
                                         ->listen_address();
         instance_info.type = "prefill";
         engine_->get_cache_info(instance_info.cluster_ids,
@@ -101,7 +105,7 @@ VLMMaster::VLMMaster(const Options& options)
 
       case InstanceRole::DECODE:
         instance_info.rpc_address = ServerRegistry::get_instance()
-                                        .get_server("DisaggDecodeServer")
+                                        .get_server("DisaggPDServer")
                                         ->listen_address();
         instance_info.type = "decode";
         engine_->get_cache_info(instance_info.cluster_ids,
@@ -125,32 +129,11 @@ VLMMaster::VLMMaster(const Options& options)
   chat_template_ =
       std::make_unique<JinjaChatTemplate>(engine_->tokenizer_args());
 
-  // create input processor
-  auto input_processor_factory =
-      ModelRegistry::get_input_processor_factory(model_args_.model_type());
-  if (input_processor_factory == nullptr) {
-    LOG(ERROR) << "No input processor defined for model type: "
-               << model_args_.model_type();
-  } else {
-    input_processor_ = input_processor_factory(model_args_);
-  }
-
-  // create image processor
-  auto image_processor_factory =
-      ModelRegistry::get_image_processor_factory(model_args_.model_type());
-  if (image_processor_factory == nullptr) {
-    LOG(ERROR) << "No image processor defined for model type: "
-               << model_args_.model_type();
-  } else {
-    image_processor_ = image_processor_factory(model_args_);
-  }
-
-  // construct tokenizer and handling threads
   tokenizer_ = engine_->tokenizer()->clone();
   threadpool_ = std::make_unique<ThreadPool>(options_.num_handling_threads());
 }
 
-VLMMaster::~VLMMaster() {
+FLUXMaster::~FLUXMaster() {
   stoped_.store(true, std::memory_order_relaxed);
   // wait for the loop thread to finish
   if (loop_thread_.joinable()) {
@@ -165,22 +148,9 @@ VLMMaster::~VLMMaster() {
 #endif
 }
 
-void VLMMaster::handle_request(const std::vector<Message>& messages,
-                               const MMInput& mm_inputs,
-                               RequestParams sp,
-                               OutputCallback callback) {
-  MMData mm_data;
-  if (!mm_inputs.empty() && !image_processor_->process(mm_inputs, mm_data)) {
-    LOG(ERROR) << " image processor process failed";
-  }
-
-  this->handle_request(messages, mm_data, sp, callback);
-}
-
-void VLMMaster::handle_batch_request(const std::vector<std::string>& prompts,
-                                     const std::vector<MMData>& mm_datas,
-                                     std::vector<RequestParams> sps,
-                                     BatchOutputCallback callback) {
+void FLUXMaster::handle_batch_request(std::vector<std::string> prompts,
+                                      std::vector<RequestParams> sps,
+                                      BatchOutputCallback callback) {
   CHECK(prompts.size() == sps.size() || sps.size() == 1)
       << "Number of prompts and sampling parameters should be the same";
 
@@ -188,9 +158,10 @@ void VLMMaster::handle_batch_request(const std::vector<std::string>& prompts,
   scheduler_->incr_pending_requests(num_requests);
   for (size_t i = 0; i < num_requests; ++i) {
     handle_request(std::move(prompts[i]),
-                   std::move(mm_datas[i]),
+                   std::nullopt,
                    // the sampling parameter may be shared
                    sps.size() == 1 ? sps[0] : std::move(sps[i]),
+                   std::nullopt,
                    [i, callback](const RequestOutput& output) {
                      output.log_request_status();
                      return callback(i, output);
@@ -198,9 +169,8 @@ void VLMMaster::handle_batch_request(const std::vector<std::string>& prompts,
   }
 }
 
-void VLMMaster::handle_batch_request(
-    const std::vector<std::vector<Message>>& conversations,
-    const std::vector<MMData>& mm_datas,
+void FLUXMaster::handle_batch_request(
+    std::vector<std::vector<Message>> conversations,
     std::vector<RequestParams> sps,
     BatchOutputCallback callback) {
   CHECK(conversations.size() == sps.size() || sps.size() == 1)
@@ -210,9 +180,10 @@ void VLMMaster::handle_batch_request(
   scheduler_->incr_pending_requests(num_requests);
   for (size_t i = 0; i < num_requests; ++i) {
     handle_request(std::move(conversations[i]),
-                   std::move(mm_datas[i]),
+                   std::nullopt,
                    // the sampling parameter may be shared
                    sps.size() == 1 ? sps[0] : std::move(sps[i]),
+                   std::nullopt,
                    [i, callback](const RequestOutput& output) {
                      output.log_request_status();
                      return callback(i, output);
@@ -220,21 +191,25 @@ void VLMMaster::handle_batch_request(
   }
 }
 
-void VLMMaster::handle_request(const std::string& prompt,
-                               const MMData& mm_data,
-                               RequestParams sp,
-                               OutputCallback callback) {
+void FLUXMaster::handle_request(std::string prompt,
+                                std::optional<std::vector<int>> prompt_tokens,
+                                RequestParams sp,
+                                std::optional<Call*> call,
+                                OutputCallback callback) {
+  LOG(INFO) << "in flux_master.cpp, into handle_request with string prompt"
+            << prompt;
   scheduler_->incr_pending_requests(1);
   auto cb = [callback = std::move(callback)](const RequestOutput& output) {
     output.log_request_status();
     return callback(output);
   };
-
+  // add into the queue
   threadpool_->schedule([this,
                          prompt = std::move(prompt),
-                         mm_data = std::move(mm_data),
+                         prompt_token = std::move(prompt_tokens),
                          sp = std::move(sp),
-                         callback = std::move(cb)]() mutable {
+                         callback = std::move(cb),
+                         call]() mutable {
     AUTO_COUNTER(request_handling_latency_seconds_completion);
 
     // remove the pending request after scheduling
@@ -246,8 +221,8 @@ void VLMMaster::handle_request(const std::string& prompt,
       return;
     }
 
-    auto request =
-        generate_request(std::move(prompt), std::move(mm_data), sp, callback);
+    auto request = generate_request(
+        std::move(prompt), std::move(prompt_token), sp, call, callback);
     if (!request) {
       return;
     }
@@ -259,21 +234,24 @@ void VLMMaster::handle_request(const std::string& prompt,
   });
 }
 
-void VLMMaster::handle_request(const std::vector<Message>& messages,
-                               const MMData& mm_data,
-                               RequestParams sp,
-                               OutputCallback callback) {
+void FLUXMaster::handle_request(std::vector<Message> messages,
+                                std::optional<std::vector<int>> prompt_tokens,
+                                RequestParams sp,
+                                std::optional<Call*> call,
+                                OutputCallback callback) {
+  LOG(INFO) << "in flux_master.cpp, into handle_request with messages";
   scheduler_->incr_pending_requests(1);
   auto cb = [callback = std::move(callback)](const RequestOutput& output) {
     output.log_request_status();
     return callback(output);
   };
-
+  // add into the queue
   threadpool_->schedule([this,
                          messages = std::move(messages),
-                         mm_data = std::move(mm_data),
+                         prompt_token = std::move(prompt_tokens),
                          sp = std::move(sp),
-                         callback = std::move(cb)]() mutable {
+                         callback = std::move(cb),
+                         call]() mutable {
     AUTO_COUNTER(request_handling_latency_seconds_chat);
     // remove the pending request after scheduling
     SCOPE_GUARD([this] { scheduler_->decr_pending_requests(); });
@@ -283,7 +261,8 @@ void VLMMaster::handle_request(const std::vector<Message>& messages,
       return;
     }
 
-    auto request = generate_request(messages, mm_data, sp, callback);
+    auto request =
+        generate_request(messages, std::move(prompt_token), sp, call, callback);
     if (!request) {
       return;
     }
@@ -295,16 +274,15 @@ void VLMMaster::handle_request(const std::vector<Message>& messages,
   });
 }
 
-void VLMMaster::run() {
+void FLUXMaster::run() {
   const bool already_running = running_.load(std::memory_order_relaxed);
   if (already_running) {
-    LOG(WARNING) << "VLMMaster is already running.";
+    LOG(WARNING) << "FLUXMaster is already running.";
     return;
   }
 
   running_.store(true, std::memory_order_relaxed);
   loop_thread_ = std::thread([this]() {
-    running_.store(true, std::memory_order_relaxed);
     const auto timeout = absl::Milliseconds(500);
     while (!stoped_.load(std::memory_order_relaxed)) {
       scheduler_->step(timeout);
@@ -313,10 +291,12 @@ void VLMMaster::run() {
   });
 }
 
-void VLMMaster::generate() {
+void FLUXMaster::generate() {
+  DCHECK(options_.enable_schedule_overlap())
+      << "Mode generate does not support schedule overlap yet.";
   const bool already_running = running_.load(std::memory_order_relaxed);
   if (already_running) {
-    LOG(WARNING) << "VLMMaster is already running.";
+    LOG(WARNING) << "Generate is already running.";
     return;
   }
 
@@ -325,41 +305,41 @@ void VLMMaster::generate() {
   running_.store(false, std::memory_order_relaxed);
 }
 
-Tokenizer* VLMMaster::get_tls_tokenizer() {
-  thread_local std::unique_ptr<Tokenizer> tls_tokenizer(tokenizer_->clone());
-  return tls_tokenizer.get();
-}
-
-std::shared_ptr<Request> VLMMaster::generate_request(std::string prompt,
-                                                     const MMData& mm_data,
-                                                     const RequestParams& sp,
-                                                     OutputCallback callback) {
+std::shared_ptr<Request> FLUXMaster::generate_request(
+    std::string prompt,
+    std::optional<std::vector<int>> prompt_tokens,
+    const RequestParams& sp,
+    std::optional<Call*> call,
+    OutputCallback callback) {
   if (prompt.empty()) {
     CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT, "Prompt is empty");
     return nullptr;
   }
+
+  // encode the prompt
   Timer timer;
+  std::vector<int> local_prompt_tokens;
 
-  input_processor_->process(prompt, mm_data);
-
-  std::vector<int> prompt_tokens;
-  if (!get_tls_tokenizer()->encode(prompt, &prompt_tokens)) {
-    LOG(ERROR) << "Failed to encode prompt: " << prompt;
-    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
-                        "Failed to encode prompt");
-    return nullptr;
+  if (prompt_tokens.has_value()) {
+    local_prompt_tokens = std::move(prompt_tokens.value());
+  } else {
+    if (!get_tls_tokenizer()->encode(prompt, &local_prompt_tokens)) {
+      LOG(ERROR) << "Failed to encode prompt: " << prompt;
+      CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                          "Failed to encode prompt");
+      return nullptr;
+    }
   }
 
   COUNTER_ADD(tokenization_latency_seconds, timer.elapsed_seconds());
 
-  // TODO: prompt_token is not enough, need to add image token size
   int32_t max_context_len = model_args_.max_position_embeddings();
   if (!options_.enable_chunked_prefill()) {
     max_context_len =
         std::min(max_context_len, options_.max_tokens_per_batch());
   }
-  if (prompt_tokens.size() >= max_context_len) {
-    LOG(ERROR) << "Prompt is too long: " << prompt_tokens.size();
+  if (local_prompt_tokens.size() >= max_context_len) {
+    LOG(ERROR) << "Prompt is too long: " << local_prompt_tokens.size();
     CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT, "Prompt is too long");
     return nullptr;
   }
@@ -371,8 +351,12 @@ std::shared_ptr<Request> VLMMaster::generate_request(std::string prompt,
   }
 
   // allocate enough capacity for prompt tokens, max tokens, and speculative
-  // tokens, TODO: add image token size as well.
-  const size_t capacity = prompt_tokens.size() + max_tokens + 1;
+  // tokens
+  size_t capacity = local_prompt_tokens.size() + max_tokens +
+                    options_.num_speculative_tokens() + /*bouns_token*/ 1;
+  if (options_.enable_schedule_overlap()) {
+    capacity += options_.num_speculative_tokens() + 1;
+  }
   const size_t best_of = sp.best_of.value_or(sp.n);
 
   RequestSamplingParam sampling_param;
@@ -384,6 +368,7 @@ std::shared_ptr<Request> VLMMaster::generate_request(std::string prompt,
   sampling_param.top_k = sp.top_k;
   sampling_param.logprobs = sp.logprobs;
   sampling_param.top_logprobs = sp.top_logprobs;
+  sampling_param.is_embeddings = sp.is_embeddings;
   if (best_of > sp.n) {
     // enable logprobs for best_of to generate sequence logprob
     sampling_param.logprobs = true;
@@ -411,22 +396,31 @@ std::shared_ptr<Request> VLMMaster::generate_request(std::string prompt,
     }
   }
 
-  StoppingChecker stopping_checker(max_tokens,
-                                   max_context_len,
-                                   model_args_.eos_token_id(),
-                                   sp.ignore_eos,
-                                   std::move(stop_tokens),
-                                   std::move(stop_sequences));
+  StoppingChecker stopping_checker(
+      max_tokens,
+      max_context_len - options_.num_speculative_tokens(),
+      model_args_.eos_token_id(),
+      sp.ignore_eos,
+      std::move(stop_tokens),
+      std::move(stop_sequences));
 
-  // results cannot be streamed when best_of != n
+  auto finish_reason =
+      stopping_checker.check(local_prompt_tokens, local_prompt_tokens.size());
+  if (finish_reason != FinishReason::NONE) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT, "Invalid Prompt");
+    LOG(ERROR) << "Invalid Prompt EndWith Token_ID:"
+               << local_prompt_tokens[local_prompt_tokens.size() - 1];
+    return nullptr;
+  }
+
   bool stream = sp.streaming;
+  // results cannot be streamed when best_of != n
   if (best_of != sp.n) {
     stream = false;
   }
 
   RequestState req_state(std::move(prompt),
-                         std::move(prompt_tokens),
-                         std::move(mm_data),
+                         std::move(local_prompt_tokens),
                          std::move(sampling_param),
                          std::move(stopping_checker),
                          capacity,
@@ -436,26 +430,39 @@ std::shared_ptr<Request> VLMMaster::generate_request(std::string prompt,
                          stream,
                          sp.echo,
                          sp.skip_special_tokens,
-                         false, /*enable_schedule_overlap*/
+                         options_.enable_schedule_overlap(),
                          callback,
-                         nullptr);
+                         nullptr,
+                         sp.decode_address,
+                         call);
+
   auto request = std::make_shared<Request>(sp.request_id,
                                            sp.x_request_id,
                                            sp.x_request_time,
                                            std::move(req_state),
-                                           sp.service_request_id);
+                                           sp.service_request_id,
+                                           sp.offline,
+                                           sp.slo_ms,
+                                           sp.priority);
 
   // add one sequence, rest will be added by scheduler
   return request;
 }
 
-std::shared_ptr<Request> VLMMaster::generate_request(
+std::shared_ptr<Request> FLUXMaster::generate_request(
     const std::vector<Message>& messages,
-    const MMData& mm_data,
+    std::optional<std::vector<int>> prompt_tokens,
     const RequestParams& sp,
+    std::optional<Call*> call,
     OutputCallback callback) {
   Timer timer;
-  auto prompt = chat_template_->apply(messages);
+  std::optional<std::string> prompt;
+  if (sp.has_tools()) {
+    prompt = chat_template_->apply(messages, sp.tools, sp.chat_template_kwargs);
+  } else {
+    prompt = chat_template_->apply(messages, sp.chat_template_kwargs);
+  }
+
   if (!prompt.has_value()) {
     CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
                         "Failed to construct prompt from messages");
@@ -465,7 +472,36 @@ std::shared_ptr<Request> VLMMaster::generate_request(
   COUNTER_ADD(chat_template_latency_seconds, timer.elapsed_seconds());
 
   return generate_request(
-      std::move(prompt.value()), std::move(mm_data), sp, callback);
+      std::move(prompt.value()), std::move(prompt_tokens), sp, call, callback);
+}
+
+void FLUXMaster::get_cache_info(std::vector<uint64_t>& cluster_ids,
+                                std::vector<std::string>& addrs,
+                                std::vector<int64_t>& k_cache_ids,
+                                std::vector<int64_t>& v_cache_ids) {
+  engine_->get_cache_info(cluster_ids, addrs, k_cache_ids, v_cache_ids);
+}
+
+bool FLUXMaster::link_cluster(const std::vector<uint64_t>& cluster_ids,
+                              const std::vector<std::string>& addrs,
+                              const std::vector<std::string>& device_ips,
+                              const std::vector<uint16_t>& ports,
+                              const int32_t dp_size) {
+  return engine_->link_cluster(cluster_ids, addrs, device_ips, ports, dp_size);
+}
+
+bool FLUXMaster::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
+                                const std::vector<std::string>& addrs,
+                                const std::vector<std::string>& device_ips,
+                                const std::vector<uint16_t>& ports,
+                                const int32_t dp_size) {
+  return engine_->unlink_cluster(
+      cluster_ids, addrs, device_ips, ports, dp_size);
+}
+
+Tokenizer* FLUXMaster::get_tls_tokenizer() {
+  thread_local std::unique_ptr<Tokenizer> tls_tokenizer(tokenizer_->clone());
+  return tls_tokenizer.get();
 }
 
 }  // namespace xllm

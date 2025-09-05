@@ -20,8 +20,7 @@ limitations under the License.
 
 #include "executor.h"
 #include "forward_params.h"
-#include "framework/model/causal_lm.h"
-#include "framework/model/embedding_lm.h"
+#include "framework/model/causal_flux.h"
 #include "framework/model/model_args.h"
 #include "framework/model/model_input_params.h"
 #include "framework/parallel_state.h"
@@ -32,13 +31,13 @@ limitations under the License.
 
 namespace xllm {
 
-class EmbedWorkerImpl : public WorkerImpl {
+class FLUXWorkerImpl : public WorkerImpl {
  public:
-  EmbedWorkerImpl(const ParallelArgs& parallel_args,
-                  const torch::Device& device,
-                  const runtime::Options& options);
+  FLUXWorkerImpl(const ParallelArgs& parallel_args,
+                 const torch::Device& device,
+                 const runtime::Options& options);
 
-  ~EmbedWorkerImpl() override = default;
+  ~FLUXWorkerImpl() override = default;
 
   // initialize model, cache manager. blocking call
   bool init_model(torch::ScalarType dtype,

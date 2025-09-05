@@ -25,11 +25,14 @@ namespace xllm {
 
 DistManager::DistManager(const runtime::Options& options) {
   auto master_node_addr = options.master_node_addr().value_or("");
+  LOG(INFO) << "Master node addr: " << master_node_addr;
   // Single-Node Worker Mode
   if (master_node_addr.empty()) {
+    LOG(INFO) << "Single-node serving mode.";
     setup_single_node_workers(options);
   } else {
     // Multi-node Worker Mode
+    LOG(INFO) << "Multi-node serving mode.";
     setup_multi_node_workers(options, master_node_addr);
   }
 }
@@ -66,8 +69,11 @@ void DistManager::setup_single_node_workers(const runtime::Options& options) {
 
   // create a worker(as worker client also) for each device
   const int32_t world_size = static_cast<int32_t>(devices.size());
-  WorkerType worker_type =
-      (options.task_type() == "generate") ? WorkerType::LLM : WorkerType::ELM;
+  // WorkerType worker_type =
+  //     (options.task_type() == "generate") ? WorkerType::LLM :
+  //     WorkerType::ELM;
+  LOG(INFO) << "in dist_manager.cpp ,we revise worker type to FLUX";
+  WorkerType worker_type = WorkerType::FLUX;
   for (size_t i = 0; i < devices.size(); ++i) {
     const int32_t rank = static_cast<int32_t>(i);
     ProcessGroup* pg = world_size > 1 ? process_groups_[i].get() : nullptr;
@@ -129,8 +135,11 @@ void DistManager::setup_multi_node_workers(
   runtime::Options worker_server_options = options;
   worker_server_options.world_size(world_size);
 
-  WorkerType worker_type =
-      (options.task_type() == "generate") ? WorkerType::LLM : WorkerType::ELM;
+  // WorkerType worker_type =
+  //     (options.task_type() == "generate") ? WorkerType::LLM :
+  //     WorkerType::ELM;
+  WorkerType worker_type = WorkerType::FLUX;
+  LOG(INFO) << "in dist_manager.cpp ,we revise worker type to FLUX";
   // create local workers
   for (size_t i = 0; i < devices.size(); ++i) {
     // worldsize = 8

@@ -157,6 +157,11 @@ CompletionServiceImpl::CompletionServiceImpl(
     const std::vector<std::string>& models)
     : APIServiceImpl(master, models) {}
 
+FLUXCompletionServiceImpl::FLUXCompletionServiceImpl(
+    FLUXMaster* master,
+    const std::vector<std::string>& models)
+    : APIServiceImpl(master, models) {}
+
 // complete_async for brpc
 void CompletionServiceImpl::process_async_impl(
     std::shared_ptr<CompletionCall> call) {
@@ -193,6 +198,7 @@ void CompletionServiceImpl::process_async_impl(
 
     request_params.decode_address = rpc_request.routing().decode_name();
   }
+  LOG(INFO) << "in completion_service_impl.cpp, into handle_request";
   // schedule the request
   master_->handle_request(
       std::move(rpc_request.prompt()),
@@ -233,4 +239,79 @@ void CompletionServiceImpl::process_async_impl(
       });
 }
 
+// complete_async for brpc
+void FLUXCompletionServiceImpl::process_async_impl(
+    std::shared_ptr<CompletionCall> call) {
+  LOG(INFO) << "FLUXCompletionServiceImpl::process_async_impl";
+  const auto& rpc_request = call->request();
+  // check if model is supported
+  const auto& model = rpc_request.model();
+  if (unlikely(!models_.contains(model))) {
+    call->finish_with_error(StatusCode::UNKNOWN, "Model not supported");
+    return;
+  }
+
+  // Check if the request is being rate-limited.
+
+  if (unlikely(flux_master_->get_rate_limiter()->is_limited())) {
+    call->finish_with_error(
+        StatusCode::RESOURCE_EXHAUSTED,
+        "The number of concurrent requests has reached the limit.");
+    return;
+  }
+  RequestParams request_params(
+      rpc_request, call->get_x_request_id(), call->get_x_request_time());
+  bool include_usage = false;
+  if (rpc_request.has_stream_options()) {
+    include_usage = rpc_request.stream_options().include_usage();
+  }
+  std::optional<std::vector<int>> prompt_tokens = std::nullopt;
+  if (rpc_request.has_routing()) {
+    prompt_tokens = std::vector<int>{};
+    prompt_tokens->reserve(rpc_request.token_ids_size());
+    for (int i = 0; i < rpc_request.token_ids_size(); i++) {
+      prompt_tokens->emplace_back(rpc_request.token_ids(i));
+    }
+
+    request_params.decode_address = rpc_request.routing().decode_name();
+  }
+  LOG(INFO) << "in flux_completion_service_impl.cpp, into handle_request";
+  flux_master_->handle_request(
+      std::move(rpc_request.prompt()),
+      std::move(prompt_tokens),
+      std::move(request_params),
+      call.get(),
+      [call,
+       model,
+       master = flux_master_,
+       stream = request_params.streaming,
+       include_usage = include_usage,
+       request_id = request_params.request_id,
+       created_time = absl::ToUnixSeconds(absl::Now())](
+          const RequestOutput& req_output) -> bool {
+        if (req_output.status.has_value()) {
+          const auto& status = req_output.status.value();
+          if (!status.ok()) {
+            // Reduce the number of concurrent requests when a request is
+            // finished with error.
+            master->get_rate_limiter()->decrease_one_request();
+
+            return call->finish_with_error(status.code(), status.message());
+          }
+        }
+
+        // Reduce the number of concurrent requests when a request is finished
+        // or canceled.
+        if (req_output.finished || req_output.cancelled) {
+          master->get_rate_limiter()->decrease_one_request();
+        }
+
+        if (stream) {
+          return send_delta_to_client_brpc(
+              call, include_usage, request_id, created_time, model, req_output);
+        }
+        return send_result_to_client_brpc(
+            call, request_id, created_time, model, req_output);
+      });
+}
 }  // namespace xllm

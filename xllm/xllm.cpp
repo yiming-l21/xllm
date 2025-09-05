@@ -91,7 +91,7 @@ int run() {
     FLAGS_host = net::get_local_ip_addr();
   }
 
-  if (FLAGS_backend == "vlm") {
+  if (FLAGS_backend == "vlm" || FLAGS_backend == "flux") {
     FLAGS_enable_prefix_cache = false;
     FLAGS_enable_chunked_prefill = false;
   }
@@ -157,7 +157,7 @@ int run() {
     master->run();
     return 0;
   }
-
+  LOG(INFO) << "in xllm.cpp, backend is " << FLAGS_backend;
   // master node
   auto master = create_master(FLAGS_backend, options);
   master->run();
@@ -173,7 +173,8 @@ int run() {
     model_version = std::filesystem::path(FLAGS_model).parent_path().filename();
   }
   std::vector<std::string> model_versions = {model_version};
-
+  LOG(INFO) << "Model name: " << model_names[0]
+            << ", version: " << model_versions[0];
   auto api_service =
       std::make_unique<APIService>(master.get(), model_names, model_versions);
   auto xllm_server =

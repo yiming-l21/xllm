@@ -30,6 +30,7 @@ limitations under the License.
 #include "framework/kv_cache/llm_data_dist_transfer.h"
 #endif
 #include "framework/eplb/eplb_executor.h"
+#include "framework/model/causal_flux.h"
 #include "framework/model/causal_lm.h"
 #include "framework/model/embedding_lm.h"
 #include "framework/model/model_input_params.h"
@@ -210,6 +211,7 @@ class WorkerImpl {
 
   // causal LM model
   std::unique_ptr<CausalLM> model_;
+  std::unique_ptr<CausalFLUX> flux_model_;
 
   std::unique_ptr<Executor> model_executor_;
 

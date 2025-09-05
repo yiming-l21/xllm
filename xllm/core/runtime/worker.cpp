@@ -32,6 +32,7 @@ limitations under the License.
 #include "framework/state_dict/state_dict.h"
 #include "runtime/embed_vlm_worker_impl.h"
 #include "runtime/embed_worker_impl.h"
+#include "runtime/flux_worker_impl.h"
 #include "runtime/llm_worker_impl.h"
 #include "runtime/speculative_worker_impl.h"
 #include "runtime/vlm_worker_impl.h"
@@ -42,12 +43,18 @@ Worker::Worker(const ParallelArgs& parallel_args,
                const torch::Device& device,
                const runtime::Options& options,
                WorkerType worker_type) {
+  LOG(INFO) << "in worker.cpp, worker type: "
+            << static_cast<size_t>(worker_type);
   if (options.enable_speculative_decode()) {
     impl_ = new SpeculativeWorkerImpl(parallel_args, device, options);
   } else if (worker_type == WorkerType::LLM) {
+    LOG(INFO) << "Creating LLMWorkerImpl in worker.cpp";
     impl_ = new LLMWorkerImpl(parallel_args, device, options);
   } else if (worker_type == WorkerType::VLM) {
     impl_ = new VLMWorkerImpl(parallel_args, device, options);
+  } else if (worker_type == WorkerType::FLUX) {
+    LOG(INFO) << "Creating FLUXWorkerImpl in worker.cpp";
+    impl_ = new FLUXWorkerImpl(parallel_args, device, options);
   } else if (worker_type == WorkerType::ELM) {
     impl_ = new EmbedWorkerImpl(parallel_args, device, options);
   } else if (worker_type == WorkerType::EVLM) {
@@ -60,6 +67,7 @@ Worker::Worker(const ParallelArgs& parallel_args,
 Worker::~Worker() { delete impl_; }
 
 bool Worker::init_model(const std::string& model_weights_path) {
+  LOG(INFO) << "Worker class in worker.cpp init model: " << model_weights_path;
   return impl_->init_model(model_weights_path);
 }
 

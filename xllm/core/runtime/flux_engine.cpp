@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "llm_engine.h"
+#include "flux_engine.h"
 
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
@@ -34,10 +34,10 @@ limitations under the License.
 #include "common/device_monitor.h"
 #include "common/global_flags.h"
 #include "common/metrics.h"
+#include "flux_worker_impl.h"
 #include "framework/model/model_args.h"
 #include "framework/model_loader.h"
 #include "framework/parallel_state.h"
-#include "llm_worker_impl.h"
 #include "runtime/worker.h"
 #include "server/xllm_server_registry.h"
 #include "util/pretty_print.h"
@@ -45,12 +45,12 @@ limitations under the License.
 
 namespace xllm {
 
-LLMEngine::LLMEngine(const runtime::Options& options,
-                     std::shared_ptr<DistManager> dist_manager)
+FLUXEngine::FLUXEngine(const runtime::Options& options,
+                       std::shared_ptr<DistManager> dist_manager)
     : options_(options), dist_manager_(dist_manager) {
-  auto master_node_addr = options.master_node_addr().value_or("");
-  CHECK(!master_node_addr.empty())
-      << " LLM need to set master node addr, Please set --master_node_addr.";
+  // auto master_node_addr = options.master_node_addr().value_or("");
+  // CHECK(!master_node_addr.empty())
+  //     << " LLM need to set master node addr, Please set --master_node_addr.";
   const auto& devices = options_.devices();
   // initialize device monitor
   DeviceMonitor::get_instance().initialize(devices);
@@ -84,7 +84,7 @@ LLMEngine::LLMEngine(const runtime::Options& options,
   }
 }
 
-bool LLMEngine::init() {
+bool FLUXEngine::init() {
   if (!init_model()) {
     LOG(ERROR) << "Failed to init model from: " << options_.model_path();
     return false;
@@ -100,7 +100,7 @@ bool LLMEngine::init() {
   return true;
 }
 
-bool LLMEngine::init_model() {
+bool FLUXEngine::init_model() {
   const std::string& model_path = options_.model_path();
   auto model_loader = ModelLoader::create(model_path);
   LOG(INFO) << "Initializing model from: " << model_path;
@@ -171,7 +171,7 @@ bool LLMEngine::init_model() {
   return true;
 }
 
-Engine::KVCacheCapacity LLMEngine::estimate_kv_cache_capacity() {
+Engine::KVCacheCapacity FLUXEngine::estimate_kv_cache_capacity() {
   const int64_t max_cache_size = options_.max_cache_size();
   const double max_memory_utilization = options_.max_memory_utilization();
 
@@ -243,7 +243,8 @@ Engine::KVCacheCapacity LLMEngine::estimate_kv_cache_capacity() {
   return kv_cache_cap;
 }
 
-bool LLMEngine::allocate_kv_cache(const Engine::KVCacheCapacity& kv_cache_cap) {
+bool FLUXEngine::allocate_kv_cache(
+    const Engine::KVCacheCapacity& kv_cache_cap) {
   LOG(INFO) << "kv cache capacity: "
             << "bytes: " << kv_cache_cap.cache_size_in_bytes
             << ", blocks: " << kv_cache_cap.n_blocks
@@ -317,15 +318,15 @@ bool LLMEngine::allocate_kv_cache(const Engine::KVCacheCapacity& kv_cache_cap) {
   return true;
 }
 
-bool LLMEngine::pull_kv_blocks(const int32_t src_dp_size,
-                               const int32_t src_dp_rank,
-                               const std::vector<uint64_t>& src_cluster_ids,
-                               const std::vector<std::string>& src_addrs,
-                               const std::vector<int64_t>& src_k_cache_ids,
-                               const std::vector<int64_t>& src_v_cache_ids,
-                               const std::vector<uint64_t>& src_blocks,
-                               const int32_t dst_dp_rank,
-                               const std::vector<uint64_t>& dst_blocks) {
+bool FLUXEngine::pull_kv_blocks(const int32_t src_dp_size,
+                                const int32_t src_dp_rank,
+                                const std::vector<uint64_t>& src_cluster_ids,
+                                const std::vector<std::string>& src_addrs,
+                                const std::vector<int64_t>& src_k_cache_ids,
+                                const std::vector<int64_t>& src_v_cache_ids,
+                                const std::vector<uint64_t>& src_blocks,
+                                const int32_t dst_dp_rank,
+                                const std::vector<uint64_t>& dst_blocks) {
   int32_t src_world_size = src_cluster_ids.size();
   int32_t src_tp_size = src_world_size / src_dp_size;
   int32_t dst_world_size = options_.nnodes();
@@ -358,7 +359,7 @@ bool LLMEngine::pull_kv_blocks(const int32_t src_dp_size,
 }
 
 std::vector<folly::SemiFuture<uint32_t>>
-LLMEngine::load_kv_blocks_from_store_async(
+FLUXEngine::load_kv_blocks_from_store_async(
     const uint32_t dp_rank,
     const std::vector<CacheBlockInfo>& cache_block_info) {
   std::vector<folly::SemiFuture<uint32_t>> futures;
@@ -373,8 +374,8 @@ LLMEngine::load_kv_blocks_from_store_async(
   return std::move(futures);
 }
 
-void LLMEngine::get_device_info(std::vector<std::string>& device_ips,
-                                std::vector<uint16_t>& ports) {
+void FLUXEngine::get_device_info(std::vector<std::string>& device_ips,
+                                 std::vector<uint16_t>& ports) {
   device_ips.reserve(worker_clients_.size());
   ports.reserve(worker_clients_.size());
   for (size_t worker_rank = 0; worker_rank < worker_clients_.size();
@@ -387,10 +388,10 @@ void LLMEngine::get_device_info(std::vector<std::string>& device_ips,
   }
 }
 
-void LLMEngine::get_cache_info(std::vector<uint64_t>& cluster_ids,
-                               std::vector<std::string>& addrs,
-                               std::vector<int64_t>& k_cache_ids,
-                               std::vector<int64_t>& v_cache_ids) {
+void FLUXEngine::get_cache_info(std::vector<uint64_t>& cluster_ids,
+                                std::vector<std::string>& addrs,
+                                std::vector<int64_t>& k_cache_ids,
+                                std::vector<int64_t>& v_cache_ids) {
   cluster_ids.reserve(worker_clients_.size());
   addrs.reserve(worker_clients_.size());
   k_cache_ids.reserve(worker_clients_.size());
@@ -410,11 +411,11 @@ void LLMEngine::get_cache_info(std::vector<uint64_t>& cluster_ids,
   }
 }
 
-bool LLMEngine::link_cluster(const std::vector<uint64_t>& cluster_ids,
-                             const std::vector<std::string>& addrs,
-                             const std::vector<std::string>& device_ips,
-                             const std::vector<uint16_t>& ports,
-                             const int32_t src_dp_size) {
+bool FLUXEngine::link_cluster(const std::vector<uint64_t>& cluster_ids,
+                              const std::vector<std::string>& addrs,
+                              const std::vector<std::string>& device_ips,
+                              const std::vector<uint16_t>& ports,
+                              const int32_t src_dp_size) {
   // Indicate which worker in the dp group in prefill the current worker needs
   // to connect to. First, we connect the rank 0 workers in each DP. Then,
   // increment the ranks sequentially.
@@ -453,11 +454,11 @@ bool LLMEngine::link_cluster(const std::vector<uint64_t>& cluster_ids,
   return true;
 }
 
-bool LLMEngine::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
-                               const std::vector<std::string>& addrs,
-                               const std::vector<std::string>& device_ips,
-                               const std::vector<uint16_t>& ports,
-                               const int32_t src_dp_size) {
+bool FLUXEngine::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
+                                const std::vector<std::string>& addrs,
+                                const std::vector<std::string>& device_ips,
+                                const std::vector<uint16_t>& ports,
+                                const int32_t src_dp_size) {
   // Indicate which worker in the dp group in prefill the current worker needs
   // to unlink.
   int32_t src_dp_worker_index = 0;
@@ -493,8 +494,8 @@ bool LLMEngine::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
   return true;
 }
 
-ForwardOutput LLMEngine::step(std::vector<Batch>& batch) {
-  LOG(INFO) << "LLMEngine step, batch size: " << batch.size();
+ForwardOutput FLUXEngine::step(std::vector<Batch>& batch) {
+  LOG(INFO) << "FLUXEngine step, batch size: " << batch.size();
   if (worker_clients_.empty()) {
     // empty worker, return
     return {};
@@ -512,12 +513,13 @@ ForwardOutput LLMEngine::step(std::vector<Batch>& batch) {
   std::vector<int32_t> dp_global_token_nums(dp_size);
   bool global_empty_kv_cache = true;
   EplbInfo eplb_info;
-  LOG(INFO) << "LLMEngine step, dp_size: " << dp_size
+  LOG(INFO) << "FLUXEngine step, dp_size: " << dp_size
             << ", worker_clients_num: " << worker_clients_num
             << ", dp_local_tp_size: " << dp_local_tp_size;
   for (auto dp_rank = 0; dp_rank < dp_size; ++dp_rank) {
     // assume the order in workers_ is its rank
     RawForwardInput raw_forward_input = batch[dp_rank].prepare_forward_input();
+    LOG(INFO) << "dp_rank: " << dp_rank;
     raw_forward_inputs.push_back(raw_forward_input);
     dp_global_token_nums[dp_rank] = raw_forward_input.flatten_tokens_vec.size();
     global_empty_kv_cache =
@@ -529,6 +531,7 @@ ForwardOutput LLMEngine::step(std::vector<Batch>& batch) {
   if (FLAGS_enable_eplb) {
     eplb_info = eplb_manager_->get_eplb_info();
   }
+  LOG(INFO) << "global_empty_kv_cache: " << global_empty_kv_cache;
   // update dp related global paramters and then execute model
   for (auto worker_rank = 0; worker_rank < worker_clients_num; ++worker_rank) {
     auto dp_rank = worker_rank / dp_local_tp_size;
@@ -543,13 +546,13 @@ ForwardOutput LLMEngine::step(std::vector<Batch>& batch) {
     futures.emplace_back(
         worker_clients_[worker_rank]->step_async(raw_forward_inputs[dp_rank]));
   }
-
+  LOG(INFO) << "All workers launched.";
   // wait for the all future to complete
   LOG(INFO) << "Before calling folly::collectAll(futures).get()";  // 新增
   auto results = folly::collectAll(futures).get();
   LOG(INFO) << "After calling folly::collectAll(futures).get()";  // 新增
-
   if (FLAGS_enable_eplb && !options_.enable_schedule_overlap()) {
+    LOG(INFO) << "process eplb data";
     process_eplb_data(results, worker_clients_num);
   }
   // concat results from dp ranks
@@ -577,7 +580,7 @@ ForwardOutput LLMEngine::step(std::vector<Batch>& batch) {
   return {};
 }
 
-void LLMEngine::update_last_step_result(std::vector<Batch>& last_batch) {
+void FLUXEngine::update_last_step_result(std::vector<Batch>& last_batch) {
   auto dp_size = options_.dp_size();
   auto worker_clients_num = worker_clients_.size();
   auto dp_local_tp_size = worker_clients_num / dp_size;
@@ -633,7 +636,7 @@ void LLMEngine::update_last_step_result(std::vector<Batch>& last_batch) {
   }
 }
 
-std::vector<int64_t> LLMEngine::get_active_activation_memory() const {
+std::vector<int64_t> FLUXEngine::get_active_activation_memory() const {
   // call worker to get active activation memory
   std::vector<folly::SemiFuture<int64_t>> futures;
   futures.reserve(worker_clients_.size());
@@ -651,14 +654,14 @@ std::vector<int64_t> LLMEngine::get_active_activation_memory() const {
   return active_activation_memories;
 }
 
-void LLMEngine::setup_workers(const runtime::Options& options) {
+void FLUXEngine::setup_workers(const runtime::Options& options) {
   if (!dist_manager_) {
     dist_manager_ = std::make_shared<DistManager>(options);
   }
   worker_clients_ = dist_manager_->get_worker_clients();
 }
 
-void LLMEngine::process_eplb_data(
+void FLUXEngine::process_eplb_data(
     const std::vector<folly::Try<std::optional<RawForwardOutput>>>& results,
     int32_t worker_clients_num) {
   int32_t num_layers = args_.n_layers() - args_.first_k_dense_replace();
