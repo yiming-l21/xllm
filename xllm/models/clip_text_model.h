@@ -140,7 +140,6 @@ class CLIPTextEmbeddingImpl : public torch::nn::Module {
   CLIPTextEmbeddingImpl(const Context& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     token_embedding_ =
         register_module("token_embedding",
                         torch::nn::Embedding(torch::nn::EmbeddingOptions(
@@ -208,7 +207,6 @@ class CLIPMLPImpl : public torch::nn::Module {
   CLIPMLPImpl(const Context& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     // act_ = quick_gelu;
     // CHECK(act_ != nullptr);
     act_ = register_module("act", torch::nn::Functional(quick_gelu));
@@ -296,9 +294,7 @@ class CLIPAttentionImpl : public torch::nn::Module {
   CLIPAttentionImpl(const Context& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     CHECK(args.hidden_size() % args.num_attention_heads() == 0);
-
     head_dim_ = args.head_dim();
     embed_dim_ = args.hidden_size();
     num_heads_ = args.num_attention_heads();
@@ -330,7 +326,6 @@ class CLIPAttentionImpl : public torch::nn::Module {
         torch::nn::Linear(
             torch::nn::LinearOptions(args.hidden_size(), args.hidden_size())
                 .bias(true)));
-
     q_proj_->weight.set_data(q_proj_->weight.to(options));
     k_proj_->weight.set_data(k_proj_->weight.to(options));
     v_proj_->weight.set_data(v_proj_->weight.to(options));
@@ -363,7 +358,6 @@ class CLIPAttentionImpl : public torch::nn::Module {
     attn_weights = torch::softmax(attn_weights, -1, torch::kFloat32);
     auto attn_probs = torch::dropout(attn_weights, dropout_, false);
     auto attn_output = torch::matmul(attn_probs, value_states);
-
     DCHECK_EQ(attn_output.sizes(),
               torch::IntArrayRef({bsz * num_heads_, tgt_len, head_dim_}));
     attn_output =
@@ -498,7 +492,7 @@ class CLIPEncoderLayerImpl : public torch::nn::Module {
   CLIPEncoderLayerImpl(const Context& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
+    option_ = context.get_tensor_options();
     self_attn_ = register_module("self_attn", CLIPAttention(context));
     layer_norm1_ = register_module(
         "layer_norm1",
@@ -523,16 +517,16 @@ class CLIPEncoderLayerImpl : public torch::nn::Module {
     auto residual = hidden_states;
     const auto& layer_norm1 = layer_norm1_(hidden_states);
     auto h = self_attn_(layer_norm1, causal_mask) + residual;
-    residual = h;
-    h = layer_norm2_(h);
+    residual = h.to(option_);
+    h = layer_norm2_(h.to(option_));
     h = mlp_(h);
     h += residual;
-    return h;
+    return h.to(option_);
   }
 
   void load_state_dict(const StateDict& state_dict) {
     self_attn_->load_state_dict(state_dict.get_dict_with_prefix("self_attn."));
-
+    LOG(INFO) << "Loading CLIPEncoderLayer weights...";
     const auto& layer_norm1_weight =
         state_dict.get_tensor("layer_norm1.weight");
     if (layer_norm1_weight.defined()) {
@@ -592,6 +586,7 @@ class CLIPEncoderLayerImpl : public torch::nn::Module {
   torch::nn::LayerNorm layer_norm2_{nullptr};
   CLIPAttention self_attn_{nullptr};
   CLIPMLP mlp_{nullptr};
+  torch::TensorOptions option_;
 };
 TORCH_MODULE(CLIPEncoderLayer);
 
@@ -600,7 +595,6 @@ class CLIPEncoderImpl : public torch::nn::Module {
   CLIPEncoderImpl(const Context& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     blocks_ = register_module("layers", torch::nn::ModuleList());
     layers_.reserve(args.num_hidden_layers());
     for (int32_t i = 0; i < args.num_hidden_layers(); i++) {
@@ -628,7 +622,6 @@ class CLIPEncoderImpl : public torch::nn::Module {
       hidden_states = layer(hidden_states, causal_mask);
     }
     if (output_hidden_states) encoder_states.emplace_back(hidden_states);
-
     std::vector<torch::Tensor> outputs = {hidden_states};
     if (output_hidden_states) {
       // todo
@@ -664,7 +657,6 @@ class CLIPTextTransformerImpl : public torch::nn::Module {
   CLIPTextTransformerImpl(const Context& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     embeddings_ = register_module("embeddings", CLIPTextEmbedding(context));
     final_layer_norm_ = register_module(
         "final_layer_norm",
@@ -696,10 +688,12 @@ class CLIPTextTransformerImpl : public torch::nn::Module {
 
   // load the weight from the checkpoint
   void load_state_dict(const StateDict& state_dict) {
+    LOG(INFO) << "Loading CLIPTextTransformer weights...";
     embeddings_->load_state_dict(
         state_dict.get_dict_with_prefix("embeddings."));
+    LOG(INFO) << "Loaded embeddings.";
     encoder_->load_state_dict(state_dict.get_dict_with_prefix("encoder."));
-
+    LOG(INFO) << "Loaded encoder.";
     const auto final_layer_norm_weight =
         state_dict.get_tensor("final_layer_norm.weight");
     if (final_layer_norm_weight.defined()) {
@@ -745,10 +739,9 @@ class CLIPTextModelImpl : public torch::nn::Module {
                     torch::Device device = torch::kCPU,
                     torch::ScalarType dtype = torch::kFloat32) {
     auto args = context.get_model_args();
-    auto options = context.get_tensor_options();
+    auto options = torch::TensorOptions().dtype(dtype).device(device);
     device_ = device;
     dtype_ = dtype;
-    // context.set_tensor_options(options_float32);
     eos_token_id = args.eos_token_id();
     transformer_ = register_module("transformer", CLIPTextTransformer(context));
   }
@@ -818,17 +811,17 @@ REGISTER_MODEL_ARGS(clip_text_model, [&] {
   LOAD_ARG_OR(hidden_act, "hidden_act", "quick_gelu");
   LOAD_ARG_OR(layer_norm_eps, "layer_norm_eps", 1e-5f);
   LOAD_ARG_OR(attention_dropout, "attention_dropout", 0.0f);
-  // LOAD_ARG_OR(initializer_range, "initializer_range", 0.02f);
-  // LOAD_ARG_OR(initializer_factor, "initializer_factor", 1.0f);
+  LOAD_ARG_OR(initializer_range, "initializer_range", 0.02f);
+  LOAD_ARG_OR(initializer_factor, "initializer_factor", 1.0f);
   LOAD_ARG_OR(pad_token_id, "pad_token_id", 1);
   LOAD_ARG_OR(bos_token_id, "bos_token_id", 0);
   LOAD_ARG_OR(eos_token_id, "eos_token_id", 2);
 
-  LOAD_ARG_OR(n_layers, "num_hidden_layers", 12);
-  LOAD_ARG_OR(n_heads, "num_attention_heads", 12);
-  LOAD_ARG_OR_FUNC(head_dim, "head_dim", [&] {
-    return args->hidden_size() / args->n_heads();
-  });
-  LOAD_ARG_OR(max_position_embeddings, "max_position_embeddings", 12000);
+  // LOAD_ARG_OR(n_layers, "num_hidden_layers", 12);
+  // LOAD_ARG_OR(n_heads, "num_attention_heads", 12);
+  // LOAD_ARG_OR_FUNC(head_dim, "head_dim", [&] {
+  //   return args->hidden_size() / args->n_heads();
+  // });
+  // LOAD_ARG_OR(max_position_embeddings, "max_position_embeddings", 12000);
 });
 }  // namespace xllm::hf

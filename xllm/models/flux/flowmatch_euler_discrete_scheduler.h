@@ -25,7 +25,6 @@ struct FlowMatchEulerDiscreteSchedulerOutput {
 };
 class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
  private:
-  // 配置参数（原config结构体的成员变量）
   int num_train_timesteps_;
   float shift_;
   bool use_dynamic_shifting_;
@@ -41,7 +40,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
   std::string time_shift_type_;
   bool stochastic_sampling_;
 
-  // 状态变量
   torch::Tensor timesteps_;
   torch::Tensor sigmas_;
   float sigma_min_;
@@ -49,7 +47,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
   std::optional<int> step_index_;
   std::optional<int> begin_index_;
 
-  // 私有工具函数
   torch::Tensor convert_to_karras(const torch::Tensor& in_sigmas,
                                   int num_inference_steps) {
     float sigma_min = sigma_min_;
@@ -99,7 +96,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
                                 int num_inference_steps,
                                 float alpha = 0.6f,
                                 float beta = 0.6f) {
-    // 注意：实际使用需要链接scipy的beta分布实现，此处仅为框架示意
     throw std::runtime_error(
         "Beta sigmas implementation requires scipy integration");
   }
@@ -137,35 +133,37 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
   }
 
  public:
-  int64_t order = 1;  // 默认阶数为1
+  int64_t order = 1;
   ModelArgs args;
   int base_image_seq_len() { return base_image_seq_len_.value(); }
   int max_image_seq_len() { return max_image_seq_len_.value(); }
   float base_shift() { return base_shift_.value(); }
   float max_shift() { return max_shift_.value(); }
-  FlowMatchEulerDiscreteSchedulerImpl(const Context& context)
-      : args(context.get_model_args()),
-        num_train_timesteps_(args.scheduler_num_train_timesteps()),
-        shift_(args.scheduler_shift()),
-        use_dynamic_shifting_(args.scheduler_use_dynamic_shifting()),
-        base_shift_(args.scheduler_base_shift()),
-        max_shift_(args.scheduler_max_shift()),
-        base_image_seq_len_(args.scheduler_base_image_seq_len()),
-        max_image_seq_len_(args.scheduler_max_image_seq_len()),
-        invert_sigmas_(false),
-        shift_terminal_(std::nullopt),
-        use_karras_sigmas_(false),
-        use_exponential_sigmas_(false),
-        use_beta_sigmas_(false),
-        time_shift_type_("exponential"),
-        stochastic_sampling_(false) {
+  FlowMatchEulerDiscreteSchedulerImpl(const Context& context) {
+    args = context.get_model_args();
+    num_train_timesteps_ = args.scheduler_num_train_timesteps();
+    shift_ = args.scheduler_shift();
+    use_dynamic_shifting_ = args.scheduler_use_dynamic_shifting();
+    base_shift_ = args.scheduler_base_shift();
+    max_shift_ = args.scheduler_max_shift();
+    base_image_seq_len_ = args.scheduler_base_image_seq_len();
+    max_image_seq_len_ = args.scheduler_max_image_seq_len();
+    invert_sigmas_ = false;
+    shift_terminal_ = std::nullopt;
+    use_karras_sigmas_ = false;
+    use_exponential_sigmas_ = false;
+    use_beta_sigmas_ = false;
+    time_shift_type_ = "exponential";
+    stochastic_sampling_ = false;
+    LOG(INFO) << "init scheduler" << num_train_timesteps_
+              << context.get_model_args().scheduler_num_train_timesteps();
     std::vector<float> timesteps_vec(num_train_timesteps_);
     for (int i = 0; i < num_train_timesteps_; ++i) {
       timesteps_vec[i] = num_train_timesteps_ - i;
     }
     torch::Tensor timesteps = torch::from_blob(
         timesteps_vec.data(), {num_train_timesteps_}, torch::kFloat32);
-
+    LOG(INFO) << "init";
     torch::Tensor sigmas = timesteps / num_train_timesteps_;
     if (!use_dynamic_shifting_) {
       sigmas = shift_ * sigmas / (1 + (shift_ - 1) * sigmas);
@@ -400,27 +398,21 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
                         const torch::Tensor& positions,
                         std::vector<KVCache>& kv_caches,
                         const ModelInputParams& input_params) {
-    // 1. 测试参数（可通过input_params传入，或硬编码用于调试）
     const int num_inference_steps = 50;
-    const float mu = 0.5f;              // 动态偏移参数
-    const bool use_stochastic = false;  // 先测试确定性模式
+    const float mu = 0.5f;
+    const bool use_stochastic = false;
 
-    // 2. 配置调度器
     this->set_timesteps(
         num_inference_steps, tokens.device(), /*sigmas=*/std::nullopt, mu);
     this->set_begin_index(0);
 
-    // 3. 生成测试输入（与Python端保持一致的随机种子）
-    torch::manual_seed(42);  // 固定随机种子，确保结果可复现
-    torch::Tensor sample = torch::randn(
-        {1, 3, 32, 32}, torch::dtype(torch::kFloat32));      // 模拟样本
-    torch::Tensor model_output = torch::randn_like(sample);  // 模拟模型输出
-    torch::Tensor timestep = this->timesteps()[0];           // 初始时间步
-    model_output = model_output.to(timestep.device())
-                       .to(torch::kFloat32);  // 确保与sample同设备和dtype
-    sample = sample.to(timestep.device())
-                 .to(torch::kFloat32);  // 确保与timestep同设备和dtype
-    // 4. 执行一步调度器计算
+    torch::manual_seed(42);
+    torch::Tensor sample =
+        torch::randn({1, 3, 32, 32}, torch::dtype(torch::kFloat32));
+    torch::Tensor model_output = torch::randn_like(sample);
+    torch::Tensor timestep = this->timesteps()[0];
+    model_output = model_output.to(timestep.device()).to(torch::kFloat32);
+    sample = sample.to(timestep.device()).to(torch::kFloat32);
     auto output = this->step(model_output,
                              timestep,
                              sample,

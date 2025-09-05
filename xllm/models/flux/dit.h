@@ -1351,7 +1351,7 @@ inline torch::Tensor get_1d_rotary_pos_embed(
   auto tensors = {pos_tensor, freqs};
 
   auto freqs_outer = torch::einsum("s,d->sd", tensors);  // [S, D/2]
-#ifdef USE_ASCEND
+#if defined(USE_NPU)
   freqs_outer = freqs_outer.to(torch::kFloat32);
 #endif
   if (use_real && repeat_interleave_real) {
