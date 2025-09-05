@@ -27,6 +27,7 @@ cc_library(
   HDRS
     causal_lm.h
     causal_vlm.h
+    causal_flux.h
     embedding_lm.h
     model_args.h
     npu_dp_ep_padding.h
