@@ -33,17 +33,17 @@ struct ModelArgs {
 
   PROPERTY(std::string, dtype);
 
-  PROPERTY(int64_t, hidden_size) = 0;
+  PROPERTY(int64_t, hidden_size) = 768;
 
   PROPERTY(std::string, hidden_act);
 
   // intermediate size
-  PROPERTY(int64_t, intermediate_size) = 0;
+  PROPERTY(int64_t, intermediate_size) = 3072;
 
   PROPERTY(int64_t, n_layers) = 0;
 
   // attn head dim
-  PROPERTY(int64_t, head_dim) = 0;
+  PROPERTY(int64_t, head_dim) = 64;
 
   // attn head num
   PROPERTY(int64_t, n_heads) = 0;
@@ -51,11 +51,11 @@ struct ModelArgs {
   // attn head num for key/value
   PROPERTY(std::optional<int64_t>, n_kv_heads);
 
-  PROPERTY(int64_t, vocab_size) = -1;
+  PROPERTY(int64_t, vocab_size) = 49408;
 
   PROPERTY(float, rms_norm_eps) = 0.0f;
 
-  PROPERTY(float, layer_norm_eps) = 0.0f;
+  PROPERTY(float, layer_norm_eps) = 1e-5;
 
   PROPERTY(int64_t, rotary_dim) = 0;
 
@@ -77,16 +77,16 @@ struct ModelArgs {
   PROPERTY(std::vector<int64_t>, rope_scaling_mrope_section);
 
   // the maximum sequence length to use for rotary position embeddings.
-  PROPERTY(int64_t, max_position_embeddings) = 0;
+  PROPERTY(int64_t, max_position_embeddings) = 77;
 
   // token id for beginning of sentence.
   PROPERTY(int32_t, bos_token_id) = 0;
 
   // token id for end of sentence.
-  PROPERTY(int32_t, eos_token_id) = 0;
+  PROPERTY(int32_t, eos_token_id) = 2;
 
   // token id for pad of sentence.
-  PROPERTY(int32_t, pad_token_id) = 0;
+  PROPERTY(int32_t, pad_token_id) = 1;
 
   // scaling factor used on the attention scores
   PROPERTY(std::optional<float>, attn_scalar);
@@ -135,7 +135,7 @@ struct ModelArgs {
   PROPERTY(int32_t, decoder_sparse_step) = 1;
   PROPERTY(float, initializer_range) = 0.02f;
   PROPERTY(std::vector<int32_t>, mlp_only_layers) = {};
-  PROPERTY(int64_t, num_attention_heads) = 32;
+  PROPERTY(int64_t, num_attention_heads) = 12;
   PROPERTY(int32_t, num_experts) = 128;
   PROPERTY(bool, output_router_logits) = false;
   PROPERTY(int32_t, rope_scaling) = -1;

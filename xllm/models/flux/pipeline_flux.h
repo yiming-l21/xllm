@@ -209,7 +209,7 @@ class FluxPipelineImpl : public torch::nn::Module {
         options_(context.get_tensor_options()) {
     vae_scale_factor_ = 1 << (model_args_.block_out_channels().size() - 1);
     _execution_device = options_.device();
-    _execution_dtype = torch::kBFloat16;
+    _execution_dtype = options_.dtype().toScalarType();
     LOG(INFO) << _execution_device << " is the execution device";
     LOG(INFO) << _execution_dtype << " is the execution dtype";
     vae_shift_factor_ = model_args_.shift_factor();
@@ -226,11 +226,17 @@ class FluxPipelineImpl : public torch::nn::Module {
     scheduler_ = FlowMatchEulerDiscreteScheduler(context);
     // register modules
     register_module("vae", vae_);
+    LOG(INFO) << "VAE initialized";
     register_module("vae_image_processor", vae_image_processor_);
+    LOG(INFO) << "VAEImageProcessor initialized";
     register_module("transformer", transformer_);
+    LOG(INFO) << "DiTModel initialized";
     register_module("t5", t5_);
+    LOG(INFO) << "T5EncoderModel initialized";
     register_module("scheduler", scheduler_);
+    LOG(INFO) << "FlowMatchEulerDiscreteScheduler initialized";
     register_module("clip_text_model", clip_text_model_);
+    LOG(INFO) << "CLIPTextModel initialized";
   }
   void check_inputs(
       std::optional<torch::optional<std::vector<std::string>>> prompt,
@@ -780,6 +786,17 @@ class FluxPipelineImpl : public torch::nn::Module {
       image = vae_->decode(unpacked_latents).sample;
       image = vae_image_processor_->postprocess(image, output_type);
     }
+    auto bytes = torch::pickle_save(image.cpu());
+
+    std::ofstream fout(
+
+        "/export/home/liuyiming54/precision_test/flux/xllm/final_image.pkl",
+
+        std::ios::out | std::ios::binary);
+
+    fout.write(bytes.data(), bytes.size());
+
+    fout.close();
     return FluxPipelineOutput{{image}};
   }
 
@@ -799,8 +816,24 @@ class FluxPipelineImpl : public torch::nn::Module {
     clip_text_model_->load_model(std::move(clip_loader));
     clip_text_model_->to(_execution_device);
   }
+  torch::Tensor logits(const torch::Tensor& hidden_states,
+                       const torch::Tensor& seleted_idxes) {
+    return torch::Tensor();
+  }
+
+  void prepare_expert_weight(int32_t layer_id,
+                             const std::vector<int32_t>& expert_ids) {}
+  void update_expert_weight(int32_t layer_id) {}
+
+#if defined(USE_NPU)
+  hf::LlmHead get_lm_head() {}
+  void set_lm_head(hf::LlmHead& head) {}
+  hf::AtbWordEmbedding get_word_embedding() {}
+  void set_word_embedding(hf::AtbWordEmbedding& embedding) {}
+#endif
 };
 TORCH_MODULE(FluxPipeline);
+REGISTER_CAUSAL_MODEL(flux, FluxPipeline);
 REGISTER_MODEL_ARGS(flux, [&] {
   LOAD_ARG_OR(model_type, "model_type", "flux");
   //   //vae
