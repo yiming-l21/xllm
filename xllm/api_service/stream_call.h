@@ -75,6 +75,7 @@ class StreamCall : public Call {
     std::string err_msg;
     if (!json2pb::ProtoMessageToJson(
             response, &json_output, json_options_, &err_msg)) {
+      LOG(ERROR) << "Failed to convert proto to json: " << err_msg;
       return finish_with_error(StatusCode::UNKNOWN, err_msg);
     }
     return true;

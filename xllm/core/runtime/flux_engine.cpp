@@ -495,7 +495,6 @@ bool FLUXEngine::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
 }
 
 ForwardOutput FLUXEngine::step(std::vector<Batch>& batch) {
-  LOG(INFO) << "FLUXEngine step, batch size: " << batch.size();
   if (worker_clients_.empty()) {
     // empty worker, return
     return {};
@@ -513,13 +512,9 @@ ForwardOutput FLUXEngine::step(std::vector<Batch>& batch) {
   std::vector<int32_t> dp_global_token_nums(dp_size);
   bool global_empty_kv_cache = true;
   EplbInfo eplb_info;
-  LOG(INFO) << "FLUXEngine step, dp_size: " << dp_size
-            << ", worker_clients_num: " << worker_clients_num
-            << ", dp_local_tp_size: " << dp_local_tp_size;
   for (auto dp_rank = 0; dp_rank < dp_size; ++dp_rank) {
     // assume the order in workers_ is its rank
     RawForwardInput raw_forward_input = batch[dp_rank].prepare_forward_input();
-    LOG(INFO) << "dp_rank: " << dp_rank;
     raw_forward_inputs.push_back(raw_forward_input);
     dp_global_token_nums[dp_rank] = raw_forward_input.flatten_tokens_vec.size();
     global_empty_kv_cache =
@@ -531,7 +526,6 @@ ForwardOutput FLUXEngine::step(std::vector<Batch>& batch) {
   if (FLAGS_enable_eplb) {
     eplb_info = eplb_manager_->get_eplb_info();
   }
-  LOG(INFO) << "global_empty_kv_cache: " << global_empty_kv_cache;
   // update dp related global paramters and then execute model
   for (auto worker_rank = 0; worker_rank < worker_clients_num; ++worker_rank) {
     auto dp_rank = worker_rank / dp_local_tp_size;
@@ -540,17 +534,12 @@ ForwardOutput FLUXEngine::step(std::vector<Batch>& batch) {
     if (FLAGS_enable_eplb) {
       raw_forward_inputs[dp_rank].eplb_info = eplb_info;
     }
-    LOG(INFO) << "why not here?";
-    LOG(INFO) << "worker_clients_[" << worker_rank
-              << "] type: " << typeid(*worker_clients_[worker_rank]).name();
     futures.emplace_back(
         worker_clients_[worker_rank]->step_async(raw_forward_inputs[dp_rank]));
   }
-  LOG(INFO) << "All workers launched.";
   // wait for the all future to complete
-  LOG(INFO) << "Before calling folly::collectAll(futures).get()";  // 新增
   auto results = folly::collectAll(futures).get();
-  LOG(INFO) << "After calling folly::collectAll(futures).get()";  // 新增
+  LOG(INFO) << "After step async,in FLUXEngine::step";
   if (FLAGS_enable_eplb && !options_.enable_schedule_overlap()) {
     LOG(INFO) << "process eplb data";
     process_eplb_data(results, worker_clients_num);

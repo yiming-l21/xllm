@@ -4,6 +4,18 @@ option go_package = "jd.com/jd-infer/xllm;xllm";
 package xllm.proto;
 
 import "google/protobuf/struct.proto";
+enum DataType {
+  DT_UNDEFINED = 0;
+  DT_FLOAT32 = 1;   
+  DT_INT64 = 2;    
+  DT_FLOAT16 = 3;  
+}
+
+message TensorProto {
+  DataType dtype = 1;          
+  repeated int64 shape = 2;    
+  bytes data = 3;             
+}
 
 message Function {
   string name = 1;

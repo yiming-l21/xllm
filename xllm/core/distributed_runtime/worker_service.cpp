@@ -349,13 +349,15 @@ void WorkerService::ExecuteModel(::google::protobuf::RpcController* controller,
         torch::Tensor top_logprobs;
         torch::Tensor embeddings;
         torch::Tensor expert_load_data;
+        torch::Tensor image_feature;
         int32_t prepared_layer_id = -1;
-
+        LOG(INFO) << "WorkerService::ExecuteModel step_async start.";
         // execute model
         auto future = worker_->step_async(forward_inputs);
 
         if (!options_.enable_schedule_overlap()) {
           auto forward_outputs = std::move(future).get();
+          LOG(INFO) << "WorkerService::ExecuteModel step_async done.";
           // convert ForwardOutput to proto::ForwardOutput which contain Tokens.
           if (forward_outputs) {
             DCHECK(forward_outputs.has_value()) << "Failed to execute model";
@@ -377,7 +379,8 @@ void WorkerService::ExecuteModel(::google::protobuf::RpcController* controller,
                   safe_to(sample_output.embeddings,
                           torch::dtype(torch::kFloat32).device(torch::kCPU),
                           true);
-
+              image_feature = safe_to(
+                  forward_outputs.value().image_feature, torch::kCPU, true);
               // [num_seq]
               next_tokens =
                   safe_to(sample_output.next_tokens, torch::kCPU, true);
@@ -406,6 +409,8 @@ void WorkerService::ExecuteModel(::google::protobuf::RpcController* controller,
                 torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
             int32_t prefill_seq_len =
                 static_cast<int32_t>(pb_forward_input->prefill_seq_len());
+            LOG(INFO) << "prefill_seq_len: " << prefill_seq_len
+                      << ", num_sequences: " << num_sequences;
             next_tokens = torch::arange(
                 -1, -1 * (num_sequences - prefill_seq_len + 1), -1, options);
             std::move(future).deferValue([](auto&&) {});
@@ -420,6 +425,7 @@ void WorkerService::ExecuteModel(::google::protobuf::RpcController* controller,
                                 top_logprobs,
                                 embeddings,
                                 expert_load_data,
+                                image_feature,
                                 prepared_layer_id,
                                 pb_forward_output);
         COUNTER_ADD(worker_service_latency_seconds, timer.elapsed_seconds());
@@ -446,6 +452,8 @@ void WorkerService::GetLastStepResult(
           const auto& sample_output = forward_outputs.value().sample_output;
           const auto& expert_load_data = safe_to(
               forward_outputs.value().expert_load_data, torch::kCPU, true);
+          const auto& image_feature =
+              safe_to(forward_outputs.value().image_feature, torch::kCPU, true);
           int32_t prepared_layer_id = forward_outputs.value().prepared_layer_id;
 #if defined(USE_NPU)
           c10::StreamGuard streamGuard(
@@ -484,6 +492,7 @@ void WorkerService::GetLastStepResult(
                                     top_logprobs,
                                     embeddings,
                                     expert_load_data,
+                                    image_feature,
                                     prepared_layer_id,
                                     pb_forward_output);
           }

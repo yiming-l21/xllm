@@ -40,6 +40,7 @@ void forward_output_to_proto(const torch::Tensor& next_tokens,
                              const torch::Tensor& top_logprobs,
                              const torch::Tensor& embeddings,
                              const torch::Tensor& expert_load_data,
+                             const torch::Tensor& image_feature,
                              int32_t prepared_layer_id,
                              proto::ForwardOutput* pb_forward_output);
 

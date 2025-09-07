@@ -40,6 +40,7 @@ void SequencesGroup::add() {
                                                      prompt_tokens_,
                                                      input_embedding_,
                                                      mm_data_,
+                                                     prompt_,
                                                      std::move(decoder),
                                                      sequence_params_));
 }

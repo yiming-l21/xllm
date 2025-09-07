@@ -82,7 +82,13 @@ class Sequence final {
            const MMData& mm_data,
            const IncrementalDecoder& incremental_decoder,
            const SequenceParams& seq_params);
-
+  Sequence(size_t index,
+           const std::vector<int32_t>& prompt_token_ids,
+           torch::Tensor input_embedding,
+           const MMData& mm_data,
+           std::string prompt,
+           const IncrementalDecoder& incremental_decoder,
+           const SequenceParams& seq_params);
   // get mm data
   const MMData& get_mm_data() const { return mm_data_; }
   void set_mrope_position_delta(int val) { mrope_position_delta_ = val; }
@@ -118,6 +124,9 @@ class Sequence final {
     return num_tokens_ - num_prompt_tokens_;
   }
   Slice<int32_t> tokens() const { return {tokens_, num_tokens_}; }
+
+  // get the prompt in the sequence
+  const std::string& prompt() const { return prompt_; }
   // get tokens in kv cache
   Slice<int32_t> cached_tokens() const {
     return {tokens_, kv_state_.kv_cache_tokens_num()};
@@ -145,6 +154,13 @@ class Sequence final {
 
   // update embeddings to the sequence
   void update_embeddings(const torch::Tensor& embedding);
+  // update image feature to the sequence
+  void update_image_feature(const torch::Tensor& image_feature) {
+    if (image_feature.defined()) {
+      image_feature_ = image_feature;
+    }
+  }
+  torch::Tensor get_image_feature() const { return image_feature_; }
   int32_t get_embedding_id() const { return embedding_id_; }
   // get input embedding
   torch::Tensor get_input_embedding() const { return input_embedding_; }
@@ -280,11 +296,16 @@ class Sequence final {
   torch::Tensor input_embedding_;
 
   MMData mm_data_;
+
+  // string prompts in the batch
+  std::string prompt_;
+
   int mrope_position_delta_ = 0;
 
   // embeddings of the sequence
   torch::Tensor output_embedding_;
-
+  // image feature of the sequence
+  torch::Tensor image_feature_;
   // number of tokens in the sequence
   size_t num_tokens_ = 0;
 

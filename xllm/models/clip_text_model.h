@@ -526,7 +526,6 @@ class CLIPEncoderLayerImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     self_attn_->load_state_dict(state_dict.get_dict_with_prefix("self_attn."));
-    LOG(INFO) << "Loading CLIPEncoderLayer weights...";
     const auto& layer_norm1_weight =
         state_dict.get_tensor("layer_norm1.weight");
     if (layer_norm1_weight.defined()) {
@@ -688,12 +687,9 @@ class CLIPTextTransformerImpl : public torch::nn::Module {
 
   // load the weight from the checkpoint
   void load_state_dict(const StateDict& state_dict) {
-    LOG(INFO) << "Loading CLIPTextTransformer weights...";
     embeddings_->load_state_dict(
         state_dict.get_dict_with_prefix("embeddings."));
-    LOG(INFO) << "Loaded embeddings.";
     encoder_->load_state_dict(state_dict.get_dict_with_prefix("encoder."));
-    LOG(INFO) << "Loaded encoder.";
     const auto final_layer_norm_weight =
         state_dict.get_tensor("final_layer_norm.weight");
     if (final_layer_norm_weight.defined()) {
@@ -779,7 +775,6 @@ class CLIPTextModelImpl : public torch::nn::Module {
   }
 
   void load_model(std::unique_ptr<ModelLoader> loader) {
-    LOG(INFO) << "Loading CLIPTextModel from ModelLoader...";
     for (const auto& state_dict : loader->get_state_dicts()) {
       transformer_->load_state_dict(
           state_dict->get_dict_with_prefix("text_model."));
@@ -787,7 +782,6 @@ class CLIPTextModelImpl : public torch::nn::Module {
 
     // verify
     transformer_->verify_loaded_weights("text_model.");
-    LOG(INFO) << "clip_text_model loaded successfully.";
   }
 
  private:

@@ -77,6 +77,35 @@ BatchInputBuilder::BatchInputBuilder(
   write_block_ids_.clear();
 }
 
+BatchInputBuilder::BatchInputBuilder(
+    const std::vector<Sequence*>& sequences,
+    const std::vector<uint32_t>& allowed_max_tokens,
+    const std::vector<torch::Tensor>& input_embeddings_vec,
+    const std::vector<MMData>& mm_data_vec,
+    const std::vector<std::string>& prompts,
+    const std::vector<CacheBlockInfo>* copy_in_cache_block_infos,
+    const std::vector<CacheBlockInfo>* copy_out_cache_block_infos,
+    const ModelArgs* args)
+    : sequences_(sequences),
+      allowed_max_tokens_(allowed_max_tokens),
+      input_embeddings_vec_(input_embeddings_vec),
+      mm_data_vec_(mm_data_vec),
+      prompts_(&prompts),
+      args_(args),
+      num_sequences_(static_cast<int32_t>(sequences.size())),
+      copy_in_cache_block_infos_(copy_in_cache_block_infos),
+      copy_out_cache_block_infos_(copy_out_cache_block_infos) {
+  // Reserve space for better performance
+  state_.flatten_tokens_vec.reserve(1000);
+  state_.flatten_positions_vec.reserve(1000);
+  state_.mrope_positions_vec.reserve(sequences.size());
+  state_.block_tables_vec.reserve(sequences.size());
+  if (args_ != nullptr) {
+    use_mrope_ = (args_->rope_scaling_rope_type() == "mrope");
+  }
+  write_block_ids_.clear();
+}
+
 ForwardInput BatchInputBuilder::build_forward_input(
     uint32_t num_decoding_tokens,
     uint32_t min_decoding_batch_size) {
@@ -336,7 +365,9 @@ ForwardInput BatchInputBuilder::state_to_forward_input() {
 
   // Setup multimodal data
   input_params.mm_data = MMData::batch(mm_data_vec_);
-
+  if (prompts_ != nullptr) {
+    input_params.prompts = *prompts_;
+  }
   // Setup block tables
   util::pad_2d_vector(state_.block_tables_vec, /*pad_value=*/0);
   input_params.block_tables =
@@ -395,7 +426,9 @@ RawForwardInput BatchInputBuilder::state_to_raw_forward_input() {
   raw_forward_input.prefill_seq_len = state_.prefill_seq_len;
 
   raw_forward_input.embedding_ids = std::move(state_.embedding_ids);
-
+  if (prompts_ != nullptr) {
+    raw_forward_input.prompts = *prompts_;
+  }
   if (mm_data_vec_.size() != 0) {
     MMData mm_data = MMData::batch(mm_data_vec_);
     const auto& res = mm_data.get<torch::Tensor>("embedding");

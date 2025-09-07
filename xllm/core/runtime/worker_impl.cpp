@@ -462,6 +462,7 @@ folly::SemiFuture<bool> WorkerImpl::copy_out_blocks_async(
 
 folly::SemiFuture<std::optional<ForwardOutput>> WorkerImpl::step_async(
     const ForwardInput& inputs) {
+  LOG(INFO) << "WorkerImpl::step_async called. in worker_impl.cpp";
   ForwardInput forward_inputs_on_device;
   prepare_work_before_execute(inputs, forward_inputs_on_device);
 
@@ -473,7 +474,10 @@ folly::SemiFuture<std::optional<ForwardOutput>> WorkerImpl::step_async(
     // run the model on the given input in working thread
     auto copy_future = copy_out_blocks_async(inputs.input_params);
     if (!enable_schedule_overlap()) {
+      LOG(INFO) << "WorkerImpl::step_async enable_schedule_overlap false. in "
+                   "worker_impl.cpp";
       const auto output = this->step(inputs);
+      LOG(INFO) << "WorkerImpl::step_async step done. in worker_impl.cpp";
       std::move(copy_future).get();
       promise.setValue(output);
     } else {

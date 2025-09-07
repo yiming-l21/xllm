@@ -270,7 +270,7 @@ folly::SemiFuture<std::optional<ForwardOutput>> RemoteWorker::step_async(
 
 folly::SemiFuture<std::optional<RawForwardOutput>> RemoteWorker::step_async(
     const RawForwardInput& inputs) {
-  LOG(INFO) << "RemoteWorker::step_async called.";
+  LOG(INFO) << "RemoteWorker::step_async with RawForwardInput param start.";
   folly::Promise<std::optional<RawForwardOutput>> promise;
   auto future = promise.getSemiFuture();
   threadpool_.schedule(
@@ -278,7 +278,6 @@ folly::SemiFuture<std::optional<RawForwardOutput>> RemoteWorker::step_async(
         // 1. convert to proto::ForwardInput
         proto::ForwardInput pb_forward_input;
         forward_input_to_proto(inputs, &pb_forward_input);
-
         // 2. call ExecuteModel with callback
         auto done = new ExecuteModelClosure();
         done->promise = std::move(promise);
@@ -300,6 +299,7 @@ void ExecuteModelClosure::Run() {
   // 3. parse tokens
   RawForwardOutput raw_forward_output;
   proto_to_forward_output(pb_output, raw_forward_output);
+
   promise.setValue(raw_forward_output);
 
   return;

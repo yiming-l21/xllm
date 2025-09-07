@@ -125,7 +125,6 @@ bool send_result_to_client_brpc(std::shared_ptr<CompletionCall> call,
   response.set_id(request_id);
   response.set_created(created_time);
   response.set_model(model);
-
   response.mutable_choices()->Reserve(req_output.outputs.size());
   for (const auto& output : req_output.outputs) {
     auto* choice = response.add_choices();
@@ -146,7 +145,6 @@ bool send_result_to_client_brpc(std::shared_ptr<CompletionCall> call,
         static_cast<int32_t>(usage.num_generated_tokens));
     proto_usage->set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
   }
-
   return call->write_and_finish(response);
 }
 
@@ -299,7 +297,9 @@ void FLUXCompletionServiceImpl::process_async_impl(
             return call->finish_with_error(status.code(), status.message());
           }
         }
-
+        LOG(INFO) << "important: before check finished or cancelled, "
+                     "req_output.finished: "
+                  << req_output.outputs[0].image_feature;
         // Reduce the number of concurrent requests when a request is finished
         // or canceled.
         if (req_output.finished || req_output.cancelled) {

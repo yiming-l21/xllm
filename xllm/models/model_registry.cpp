@@ -50,6 +50,17 @@ void ModelRegistry::register_causalvlm_factory(const std::string& name,
   }
 }
 
+void ModelRegistry::register_causalflux_factory(const std::string& name,
+                                                CausalFLUXFactory factory) {
+  ModelRegistry* instance = get_instance();
+
+  if (instance->model_registry_[name].causal_flux_factory != nullptr) {
+    LOG(WARNING) << "causal flux factory for " << name << "already registered.";
+  } else {
+    instance->model_registry_[name].causal_flux_factory = factory;
+  }
+}
+
 void ModelRegistry::register_embeddinglm_factory(const std::string& name,
                                                  EmbeddingLMFactory factory) {
   ModelRegistry* instance = get_instance();
@@ -134,6 +145,13 @@ CausalVLMFactory ModelRegistry::get_causalvlm_factory(const std::string& name) {
   return instance->model_registry_[name].causal_vlm_factory;
 }
 
+CausalFLUXFactory ModelRegistry::get_causalflux_factory(
+    const std::string& name) {
+  ModelRegistry* instance = get_instance();
+
+  return instance->model_registry_[name].causal_flux_factory;
+}
+
 EmbeddingLMFactory ModelRegistry::get_embeddinglm_factory(
     const std::string& name) {
   ModelRegistry* instance = get_instance();
@@ -191,6 +209,20 @@ std::unique_ptr<CausalLM> create_llm_model(const Context& context) {
 std::unique_ptr<CausalVLM> create_vlm_model(const Context& context) {
   // get the factory function for the model type from model registry
   auto factory = ModelRegistry::get_causalvlm_factory(
+      context.get_model_args().model_type());
+  if (factory) {
+    return factory(context);
+  }
+
+  LOG(ERROR) << "Unsupported model type: "
+             << context.get_model_args().model_type();
+
+  return nullptr;
+}
+
+std::unique_ptr<CausalFLUX> create_flux_model(const Context& context) {
+  // get the factory function for the model type from model registry
+  auto factory = ModelRegistry::get_causalflux_factory(
       context.get_model_args().model_type());
   if (factory) {
     return factory(context);

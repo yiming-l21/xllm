@@ -155,15 +155,12 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
     use_beta_sigmas_ = false;
     time_shift_type_ = "exponential";
     stochastic_sampling_ = false;
-    LOG(INFO) << "init scheduler" << num_train_timesteps_
-              << context.get_model_args().scheduler_num_train_timesteps();
     std::vector<float> timesteps_vec(num_train_timesteps_);
     for (int i = 0; i < num_train_timesteps_; ++i) {
       timesteps_vec[i] = num_train_timesteps_ - i;
     }
     torch::Tensor timesteps = torch::from_blob(
         timesteps_vec.data(), {num_train_timesteps_}, torch::kFloat32);
-    LOG(INFO) << "init";
     torch::Tensor sigmas = timesteps / num_train_timesteps_;
     if (!use_dynamic_shifting_) {
       sigmas = shift_ * sigmas / (1 + (shift_ - 1) * sigmas);
@@ -232,18 +229,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
       const std::optional<std::vector<float>>& sigmas = std::nullopt,
       const std::optional<float>& mu = std::nullopt,
       const std::optional<std::vector<float>>& timesteps = std::nullopt) {
-    LOG(INFO) << "Setting timesteps for FluxScheduler";
-    LOG(INFO) << "num_inference_steps: " << num_inference_steps;
-    LOG(INFO) << "device: " << device;
-    if (sigmas.has_value()) {
-      LOG(INFO) << "sigmas: " << sigmas.value();
-    }
-    if (timesteps.has_value()) {
-      LOG(INFO) << "timesteps: " << timesteps.value();
-    }
-    if (mu.has_value()) {
-      LOG(INFO) << "mu: " << mu.value();
-    }
     if (use_dynamic_shifting_ && !mu.has_value()) {
       throw std::invalid_argument(
           "mu must be provided when use_dynamic_shifting is true");
@@ -343,7 +328,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
     if (!step_index_.has_value()) {
       init_step_index(timestep);
     }
-    LOG(INFO) << "FlowMatchEulerDiscreteScheduler";
     torch::Tensor sample_float = sample.to(torch::kFloat32);
     torch::Tensor prev_sample;
 

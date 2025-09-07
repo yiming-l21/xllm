@@ -184,6 +184,7 @@ message ForwardInput {
   repeated CacheBlockInfo async_copy_out_blocks = 27;
   repeated CacheBlockInfo copy_out_blocks = 28;
   repeated CacheBlockInfo copy_in_blocks = 29;
+  repeated string prompts = 30;
 }
 
 message Embeddings {
@@ -208,7 +209,8 @@ message SquenceOutput {
 message ForwardOutput {
   repeated SquenceOutput outputs = 2;
   repeated int64 expert_load_data = 3;
-  int32 prepared_layer_id = 4;
+  TensorProto image_feature = 4;
+  int32 prepared_layer_id = 5;
 }
 
 // master create Collective service

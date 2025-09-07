@@ -122,6 +122,7 @@ Worker::estimate_kv_cache_capacity_async() {
 
 folly::SemiFuture<std::optional<ForwardOutput>> Worker::step_async(
     const ForwardInput& inputs) {
+  LOG(INFO) << "Worker::step_async called. in worker.cpp";
   return impl_->step_async(inputs);
 }
 

@@ -6,7 +6,6 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -16,12 +15,16 @@
 #include <vector>
 
 #include "core/framework/context.h"
+#include "core/framework/hf_model_loader.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
+#include "core/framework/tokenizer/clip_tokenizer.h"
+#include "core/framework/tokenizer/tokenizer_args.h"
 #include "core/layers/npu/pos_embedding.h"
 #include "core/layers/npu/rms_norm.h"
 #include "core/layers/npu/word_embedding.h"
 #include "core/layers/rotary_embedding.h"
+#include "core/util/json_reader.h"
 #include "framework/context.h"
 #include "models/autoencoder_kl.h"
 #include "models/clip_text_model.h"
@@ -149,8 +152,6 @@ torch::Tensor randn_tensor(
   // if (generator_provided && !generator.value().defined()) {
   //     throw std::invalid_argument("Provided generator is not defined.");
   // }
-  LOG(INFO) << "begin to generate random tensor with shape: " << shape
-            << ", device: " << rand_device << ", dtype: " << dtype;
   torch::manual_seed(42);
   torch::Tensor latents;
   torch::TensorOptions options =
@@ -158,12 +159,8 @@ torch::Tensor randn_tensor(
 
   try {
     if (generator_provided) {
-      LOG(INFO) << "Generating random latents with shape: " << shape
-                << ", device: " << rand_device << ", dtype: " << dtype;
       latents = torch::randn(shape, generator.value(), options);
     } else {
-      LOG(INFO) << "Generating random latents with shape: " << shape
-                << ", device: " << rand_device << ", dtype: " << dtype;
       latents = torch::randn(shape, options);
     }
 
@@ -189,6 +186,7 @@ class FluxPipelineImpl : public torch::nn::Module {
   DiTModel transformer_{nullptr};
   T5EncoderModel t5_{nullptr};
   CLIPTextModel clip_text_model_{nullptr};
+  std::unique_ptr<CLIPTokenizer> clip_tokenizer_{nullptr};
   int vae_scale_factor_;
   float vae_scaling_factor_;
   float vae_shift_factor_;
@@ -201,6 +199,8 @@ class FluxPipelineImpl : public torch::nn::Module {
   torch::Device _execution_device = torch::kCPU;
   torch::ScalarType _execution_dtype = torch::kFloat32;
   ModelArgs model_args_;
+  TokenizerArgs clip_tokenizer_args_;
+  TokenizerArgs t5_tokenizer_args_;
   torch::TensorOptions options_;
 
  public:
@@ -209,7 +209,7 @@ class FluxPipelineImpl : public torch::nn::Module {
         options_(context.get_tensor_options()) {
     vae_scale_factor_ = 1 << (model_args_.block_out_channels().size() - 1);
     _execution_device = options_.device();
-    _execution_dtype = torch::kBFloat16;
+    _execution_dtype = options_.dtype().toScalarType();
     LOG(INFO) << _execution_device << " is the execution device";
     LOG(INFO) << _execution_dtype << " is the execution dtype";
     vae_shift_factor_ = model_args_.shift_factor();
@@ -218,12 +218,18 @@ class FluxPipelineImpl : public torch::nn::Module {
     tokenizer_max_length_ = 77;  // TODO: get from config file
     vae_image_processor_ = VAEImageProcessor(
         true, vae_scale_factor_, 4, "lanczos", -1, true, false, false, false);
+    LOG(INFO) << "VAEImageProcessor initialized";
     vae_ = VAE(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "VAE initialized";
     transformer_ = DiTModel(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "DiTModel initialized";
     t5_ = T5EncoderModel(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "T5EncoderModel initialized";
     clip_text_model_ =
         CLIPTextModel(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "CLIPTextModel initialized";
     scheduler_ = FlowMatchEulerDiscreteScheduler(context);
+    LOG(INFO) << "FlowMatchEulerDiscreteScheduler initialized";
     // register modules
     register_module("vae", vae_);
     register_module("vae_image_processor", vae_image_processor_);
@@ -364,8 +370,6 @@ class FluxPipelineImpl : public torch::nn::Module {
       std::optional<torch::Tensor> latents = std::nullopt) {
     int64_t adjusted_height = 2 * (height / (vae_scale_factor_ * 2));
     int64_t adjusted_width = 2 * (width / (vae_scale_factor_ * 2));
-    LOG(INFO) << height << " " << width << " " << adjusted_height << " "
-              << adjusted_width << " " << vae_scale_factor_;
     std::vector<int64_t> shape = {
         batch_size, num_channels_latents, adjusted_height, adjusted_width};
     if (latents.has_value()) {
@@ -389,7 +393,6 @@ class FluxPipelineImpl : public torch::nn::Module {
                         const torch::Tensor& positions,
                         std::vector<KVCache>& kv_caches,
                         const ModelInputParams& input_params) {
-    LOG(INFO) << "FluxPipelineImpl forward called";
     torch::Generator generator = torch::Generator();
     torch::manual_seed(42);
     std::vector<torch::Generator> generators_vec;
@@ -397,11 +400,11 @@ class FluxPipelineImpl : public torch::nn::Module {
     std::optional<std::vector<torch::Generator>> generators_opt =
         generators_vec;
     FluxPipelineOutput output =
-        forward_(std::vector<std::string>(),  // prompt
-                 std::nullopt,                // prompt_2
-                 std::nullopt,                // negative_prompt
-                 std::nullopt,                // negative_prompt_2
-                 1.0f,                        // cfg scale
+        forward_(input_params.prompts,  // prompt
+                 std::nullopt,          // prompt_2
+                 std::nullopt,          // negative_prompt
+                 std::nullopt,          // negative_prompt_2
+                 1.0f,                  // cfg scale
                  1440,
                  1440,            // height, width
                  25,              // num_inference_steps
@@ -417,8 +420,7 @@ class FluxPipelineImpl : public torch::nn::Module {
                  "pil",           // output_type
                  512              // max_sequence_length
         );
-    LOG(INFO) << "flux output" << output.images;
-    return torch::Tensor();
+    return output.images[0];
   }
   torch::Tensor _get_clip_prompt_embeds(
       std::vector<std::string>& prompt,
@@ -430,42 +432,38 @@ class FluxPipelineImpl : public torch::nn::Module {
     int64_t batch_size = prompt_list.size();
     TORCH_CHECK(batch_size > 0, "Prompt list cannot be empty");
     std::vector<std::string> processed_prompt = prompt_list;
-    // TODO add CLIP tokenizer
-    //    auto text_inputs = tokenizer.encode(
-    //        processed_prompt,
-    //        tokenizer_max_length_,
-    //        true,
-    //        true
+    // clip_tokenizer_->encode(
+    //     processed_prompt[0],
+    //     &text_input_ids1
     //    );
-    //    torch::Tensor text_input_ids = text_inputs.input_ids;
-    //    auto untruncated = tokenizer.encode(
-    //        processed_prompt,
-    //        0,
-    //        true,
-    //        false
-    //    );
-    //    torch::Tensor untruncated_ids = untruncated.input_ids;
-    //    if (untruncated_ids.size(1) >= text_input_ids.size(1) &&
-    //        !torch::equal(
-    //            text_input_ids,
-    //            untruncated_ids.index({torch::indexing::Slice(),
-    //            torch::indexing::Slice(0, text_input_ids.size(1))})
-    //        )) {
-    //
-    //        auto truncated_part = untruncated_ids.index({
-    //            torch::indexing::Slice(),
-    //            torch::indexing::Slice(tokenizer_max_length_ - 1, -1)
-    //        });
-    //        auto removed_text = tokenizer.batch_decode(truncated_part);
+    //   auto untruncated = tokenizer.encode(
+    //       processed_prompt[0],
+    //       0,
+    //       true,
+    //       false
+    //   );
+    //   torch::Tensor untruncated_ids = untruncated.input_ids;
+    //   if (untruncated_ids.size(1) >= text_input_ids.size(1) &&
+    //       !torch::equal(
+    //           text_input_ids,
+    //           untruncated_ids.index({torch::indexing::Slice(),
+    //           torch::indexing::Slice(0, text_input_ids.size(1))})
+    //       )) {
 
-    //       std::cerr << "Warning: The following part of your input was
-    //       truncated because CLIP can only handle sequences up to "
-    //                 << tokenizer_max_length_ << " tokens: ";
-    //       for (const auto& text : removed_text) {
-    //           std::cerr << text << " ";
-    //       }
-    //       std::cerr << std::endl;
-    //   }
+    //       auto truncated_part = untruncated_ids.index({
+    //           torch::indexing::Slice(),
+    //           torch::indexing::Slice(tokenizer_max_length_ - 1, -1)
+    //       });
+    //       auto removed_text = tokenizer.batch_decode(truncated_part);
+
+    //     std::cerr << "Warning: The following part of your input was
+    //     truncated because CLIP can only handle sequences up to "
+    //               << tokenizer_max_length_ << " tokens: ";
+    //     for (const auto& text : removed_text) {
+    //         std::cerr << text << " ";
+    //     }
+    //     std::cerr << std::endl;
+    // }
     std::vector<int64_t> text_input_ids = {
         49406, 40555, 3155,  1844,  267,   12177, 2463,  268,   8893,  6469,
         268,   1844,  1611,  49407, 49407, 49407, 49407, 49407, 49407, 49407,
@@ -615,7 +613,6 @@ class FluxPipelineImpl : public torch::nn::Module {
       std::optional<torch::Tensor> negative_pooled_prompt_embeds = std::nullopt,
       std::string output_type = "pil",
       int64_t max_sequence_length = 512) {
-    LOG(INFO) << "FluxPipeline operator() called";
     torch::NoGradGuard no_grad;
     int64_t actual_height = height.has_value()
                                 ? height.value()
@@ -714,7 +711,6 @@ class FluxPipelineImpl : public torch::nn::Module {
     // prepare guidance
     torch::Tensor guidance;
     if (transformer_->guidance_embeds()) {
-      LOG(INFO) << "Preparing guidance tensor with scale: " << guidance_scale;
       torch::TensorOptions options =
           torch::dtype(torch::kFloat32).device(device);
 
@@ -722,13 +718,11 @@ class FluxPipelineImpl : public torch::nn::Module {
       guidance = guidance.expand({prepared_latents.size(0)});
     }
     scheduler_->set_begin_index(0);
-    LOG(INFO) << "Starting inference with " << num_inference_steps_actual
-              << " steps.";
     torch::Tensor timestep =
         torch::empty({prepared_latents.size(0)}, prepared_latents.options());
     for (int64_t i = 0; i < timesteps.numel(); ++i) {
       if (_interrupt) break;
-
+      LOG(INFO) << "Processing timestep " << i;
       torch::Tensor t = timesteps[i].unsqueeze(0);
       _current_timestep = t;
       timestep.fill_(t.item<float>())
@@ -780,11 +774,66 @@ class FluxPipelineImpl : public torch::nn::Module {
       image = vae_->decode(unpacked_latents).sample;
       image = vae_image_processor_->postprocess(image, output_type);
     }
+    auto bytes = torch::pickle_save(image.cpu());  // 转成二进制 pickle 数据
+    std::ofstream fout(
+        "/export/home/liuyiming54/precision_test/flux/xllm/final_image.pkl",
+        std::ios::out | std::ios::binary);
+    fout.write(bytes.data(), bytes.size());
+    fout.close();
     return FluxPipelineOutput{{image}};
   }
-
+  void load_tokenizer_args(const std::string& model_path,
+                           TokenizerArgs& tokenizer_args) {
+    // load tokenizer args
+    JsonReader tokenizer_reader;
+    const std::string tokenizer_args_file_path =
+        model_path + "/tokenizer_config.json";
+    if (tokenizer_reader.parse(tokenizer_args_file_path)) {
+      if (auto v = tokenizer_reader.value<bool>("add_bos_token")) {
+        tokenizer_args.add_bos_token() = v.value();
+      }
+      if (auto v = tokenizer_reader.value<bool>("add_eos_token")) {
+        tokenizer_args.add_eos_token() = v.value();
+      }
+      if (auto v = tokenizer_reader.value<std::string>("tokenizer_class")) {
+        tokenizer_args.tokenizer_class() = v.value();
+      }
+      // read bos_token
+      if (auto v = tokenizer_reader.value<std::string>("bos_token.content")) {
+        tokenizer_args.bos_token() = v.value();
+      } else if (auto v = tokenizer_reader.value<std::string>("bos_token")) {
+        tokenizer_args.bos_token() = v.value();
+      }
+      // read eos_token
+      if (auto v = tokenizer_reader.value<std::string>("eos_token.content")) {
+        tokenizer_args.eos_token() = v.value();
+      } else if (auto v = tokenizer_reader.value<std::string>("eos_token")) {
+        tokenizer_args.eos_token() = v.value();
+      }
+      // read pad_token
+      if (auto v = tokenizer_reader.value<std::string>("pad_token.content")) {
+        tokenizer_args.pad_token() = v.value();
+      } else if (auto v = tokenizer_reader.value<std::string>("pad_token")) {
+        tokenizer_args.pad_token() = v.value();
+      }
+    }
+    if (tokenizer_args.tokenizer_class().find("T5") != std::string::npos) {
+      tokenizer_args.vocab_file() = "spiece.model";
+    } else {
+      tokenizer_args.vocab_file() = "vocab.json";
+    }
+  }
   void load_model(std::unique_ptr<ModelLoader> loader) {
     std::string model_path = loader->model_weights_path();
+    // //load tokenizer args
+    // load_tokenizer_args(model_path + "/tokenizer", clip_tokenizer_args_);
+    // clip_tokenizer_ = std::make_unique<CLIPTokenizer>(model_path +
+    // "/tokenizer", clip_tokenizer_args_); load_tokenizer_args(model_path +
+    // "/tokenizer_2", t5_tokenizer_args_);
+
+    // LOG(INFO) << "Tokenizer args loaded" << clip_tokenizer_args_;
+    // LOG(INFO) << "Tokenizer args loaded" << t5_tokenizer_args_;
+    // load models
     auto transformer_loader = ModelLoader::create(model_path + "/transformer");
     auto vae_loader = ModelLoader::create(model_path + "/vae");
     auto t5_loader = ModelLoader::create(model_path + "/text_encoder_2");
@@ -801,6 +850,8 @@ class FluxPipelineImpl : public torch::nn::Module {
   }
 };
 TORCH_MODULE(FluxPipeline);
+
+REGISTER_CAUSAL_FLUX_MODEL(flux, FluxPipeline);
 REGISTER_MODEL_ARGS(flux, [&] {
   LOAD_ARG_OR(model_type, "model_type", "flux");
   //   //vae

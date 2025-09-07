@@ -65,6 +65,39 @@ Sequence::Sequence(size_t index,
   cur_generated_token_idx_ = num_prompt_tokens_;
 }
 
+Sequence::Sequence(size_t index,
+                   const std::vector<int32_t>& prompt_token_ids,
+                   torch::Tensor input_embedding,
+                   const MMData& mm_data,
+                   std::string prompt,
+                   const IncrementalDecoder& decoder,
+                   const SequenceParams& seq_params)
+    : index_(index),
+      mm_data_(mm_data),
+      prompt_(std::move(prompt)),
+      latest_generate_time_(absl::Now()),
+      sequence_params_(seq_params),
+      decoder_(std::move(decoder)) {
+  CHECK(!prompt_token_ids.empty()) << "empty prompt token ids";
+  auto capacity = sequence_params_.seq_capacity;
+  CHECK_GT(capacity, prompt_token_ids.size()) << "capacity too small";
+
+  num_prompt_tokens_ = prompt_token_ids.size();
+  volatile_num_prompt_tokens_ = num_prompt_tokens_;
+  tokens_.resize(capacity);
+
+  // init logprob state
+  logprob_state_ = std::make_unique<LogprobState>(num_prompt_tokens_, capacity);
+
+  // add the prompt tokens
+  for (const auto token_id : prompt_token_ids) {
+    tokens_[num_tokens_++] = token_id;
+    token_to_count_map_[token_id]++;
+  }
+  input_embedding_ = input_embedding;
+  cur_generated_token_idx_ = num_prompt_tokens_;
+}
+
 void Sequence::append_token(const Token& token) {
   CHECK_LT(num_tokens_, tokens_.size())
       << "exceed the token capacity of the sequence";
@@ -241,6 +274,8 @@ std::optional<SequenceOutput> Sequence::generate_streaming_output(
 
 SequenceOutput Sequence::generate_output() {
   SequenceOutput output;
+  LOG(INFO) << "Sequence::generate_output, index: " << index_
+            << ", num_tokens_: " << num_tokens_;
   output.index = index_;
   if (finish_reason_ != FinishReason::NONE) {
     output.finish_reason = finish_reason_.to_string();
@@ -251,7 +286,8 @@ SequenceOutput Sequence::generate_output() {
 
 SequenceOutput Sequence::generate_output(const Tokenizer& tokenizer) {
   AUTO_COUNTER(detokenization_latency_seconds_non_stream);
-
+  LOG(INFO) << "Sequence::generate_output with tokenizer, index: " << index_
+            << ", num_tokens_: " << num_tokens_;
   // build embeddings for output
   if (sequence_params_.sampling_param->is_embeddings) {
     SequenceOutput output;
@@ -261,7 +297,12 @@ SequenceOutput Sequence::generate_output(const Tokenizer& tokenizer) {
     output.embeddings = embedding_slice;
     return output;
   }
-
+  if (sequence_params_.sampling_param->is_image_features) {
+    SequenceOutput output;
+    output.index = index_;
+    output.image_feature = image_feature_;
+    return output;
+  }
   // NOTE: enable_schedule_overlap will generate an extra '-1' token.
   // we need to ignore these '-1' tokens.
   const auto ids = tokens();

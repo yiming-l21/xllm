@@ -866,7 +866,6 @@ class T5EncoderModelImpl : public torch::nn::Module {
         .to(device_);
   }
   torch::Tensor forward(torch::Tensor input_ids) {
-    LOG(INFO) << "Forwarding T5EncoderModel";
     // prepare input parameters
     // input parameters
     // input_ids
@@ -965,7 +964,6 @@ class T5EncoderModelImpl : public torch::nn::Module {
             state_dict->get_dict_with_prefix(block_prefix));
       }
     }
-    LOG(INFO) << "T5EncoderModel loaded successfully.";
   }
 };
 TORCH_MODULE(T5EncoderModel);

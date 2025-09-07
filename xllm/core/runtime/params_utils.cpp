@@ -43,6 +43,9 @@ void proto_to_forward_input(const proto::ForwardInput* pb_forward_input,
                             ForwardInput& forward_inputs,
                             int64_t num_decoding_tokens) {
   Timer timer;
+  std::vector<std::string> prompts(pb_forward_input->prompts().begin(),
+                                   pb_forward_input->prompts().end());
+  forward_inputs.input_params.prompts = prompts;
   int32_t num_sequences = pb_forward_input->num_sequences();
   std::vector<int32_t> flatten_tokens_vec =
       std::vector<int32_t>(pb_forward_input->flatten_tokens_vec().begin(),
@@ -306,6 +309,7 @@ void proto_to_forward_input(const proto::ForwardInput* pb_forward_input,
 void forward_input_to_proto(const RawForwardInput& inputs,
                             proto::ForwardInput* pb_forward_input) {
   Timer timer;
+  ADD_VECTOR_TO_PROTO(pb_forward_input->mutable_prompts(), inputs.prompts);
   ADD_VECTOR_TO_PROTO(pb_forward_input->mutable_flatten_tokens_vec(),
                       inputs.flatten_tokens_vec);
   ADD_VECTOR_TO_PROTO(pb_forward_input->mutable_flatten_positions_vec(),
@@ -455,6 +459,34 @@ void forward_input_to_proto(const RawForwardInput& inputs,
 void proto_to_forward_output(const proto::ForwardOutput& pb_output,
                              RawForwardOutput& raw_forward_output) {
   Timer timer;
+  const proto::TensorProto& pb_image_feat = pb_output.image_feature();
+  std::vector<int64_t> tensor_shape;
+  tensor_shape.assign(pb_image_feat.shape().begin(),
+                      pb_image_feat.shape().end());
+  torch::IntArrayRef shape_ref(tensor_shape);
+  torch::Dtype dtype;
+  switch (pb_image_feat.dtype()) {
+    case proto::DataType::DT_FLOAT32:
+      dtype = torch::kFloat32;
+      break;
+    case proto::DataType::DT_INT64:
+      dtype = torch::kInt64;
+      break;
+    case proto::DataType::DT_FLOAT16:
+      dtype = torch::kFloat16;
+      break;
+    default:
+      LOG(FATAL) << "Unsupported data type for tensor conversion: "
+                 << pb_image_feat.dtype();
+  }
+  torch::Tensor tensor =
+      torch::from_blob(const_cast<void*>(static_cast<const void*>(
+                           pb_image_feat.data().data())),
+                       shape_ref,
+                       dtype)
+          .clone();
+
+  raw_forward_output.image_feature = tensor;
   size_t seq_nums = pb_output.outputs().size();
   raw_forward_output.outputs.reserve(seq_nums);
   size_t expert_load_data_size = pb_output.expert_load_data().size();
@@ -498,8 +530,10 @@ void forward_output_to_proto(const torch::Tensor& next_tokens,
                              const torch::Tensor& top_logprobs,
                              const torch::Tensor& embeddings,
                              const torch::Tensor& expert_load_data,
+                             const torch::Tensor& image_feature,
                              int32_t prepared_layer_id,
                              proto::ForwardOutput* pb_forward_output) {
+  LOG(INFO) << "forward_output_to_proto";
   Timer timer;
   int32_t num_seqs = next_tokens.size(0);
   if (embeddings.defined() && embeddings.numel() > 0) {
@@ -627,6 +661,25 @@ void forward_output_to_proto(const torch::Tensor& next_tokens,
       ADD_VECTOR_TO_PROTO(pb_forward_output->mutable_expert_load_data(),
                           expert_load_data_flattened_slice);
     }
+  }
+  if (image_feature.defined() && image_feature.numel() > 0) {
+    auto* image_feature_proto = pb_forward_output->mutable_image_feature();
+    if (image_feature.dtype() == torch::kFloat32) {
+      image_feature_proto->set_dtype(proto::DataType::DT_FLOAT32);
+    } else if (image_feature.dtype() == torch::kInt64) {
+      image_feature_proto->set_dtype(proto::DataType::DT_INT64);
+    } else if (image_feature.dtype() == torch::kFloat16) {
+      image_feature_proto->set_dtype(proto::DataType::DT_FLOAT16);
+    } else {
+      LOG(WARNING) << "Unsupported tensor dtype for image_feature";
+      image_feature_proto->set_dtype(proto::DataType::DT_UNDEFINED);
+    }
+    for (int64_t dim : image_feature.sizes()) {
+      image_feature_proto->add_shape(dim);
+    }
+    image_feature_proto->set_data(
+        reinterpret_cast<const char*>(image_feature.data_ptr()),
+        image_feature.nbytes());
   }
   COUNTER_ADD(proto_latency_seconds_o2proto, timer.elapsed_seconds());
   return;

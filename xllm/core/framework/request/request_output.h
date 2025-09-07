@@ -64,6 +64,8 @@ struct SequenceOutput {
 
   torch::Tensor embedding;
 
+  torch::Tensor image_feature;
+
   // the token ids of the generated text.
   std::vector<int32_t> token_ids;
 

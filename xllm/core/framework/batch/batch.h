@@ -102,6 +102,8 @@ class Batch {
 
   // mm_data in the batch
   std::vector<MMData> mm_data_vec_;
+  // string prompts in the batch
+  std::vector<std::string> prompts_;
 };
 
 }  // namespace xllm

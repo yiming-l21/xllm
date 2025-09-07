@@ -138,6 +138,8 @@ message SequenceOutput {
   string finish_reason = 4;
   // log probabilities of the generated tokens.
   repeated LogProb logprobs = 5;
+  //image test
+  TensorProto image_feature = 6;
 }
 
 message GenerationStatus {

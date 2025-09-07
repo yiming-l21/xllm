@@ -196,13 +196,12 @@ void FLUXMaster::handle_request(std::string prompt,
                                 RequestParams sp,
                                 std::optional<Call*> call,
                                 OutputCallback callback) {
-  LOG(INFO) << "in flux_master.cpp, into handle_request with string prompt"
-            << prompt;
   scheduler_->incr_pending_requests(1);
   auto cb = [callback = std::move(callback)](const RequestOutput& output) {
     output.log_request_status();
     return callback(output);
   };
+  LOG(INFO) << "in flux_master.cpp, into handle_request with prompt";
   // add into the queue
   threadpool_->schedule([this,
                          prompt = std::move(prompt),
@@ -226,11 +225,13 @@ void FLUXMaster::handle_request(std::string prompt,
     if (!request) {
       return;
     }
-
+    LOG(INFO) << "in flux_master.cpp, after generate_request, before "
+                 "add_request to scheduler_";
     if (!scheduler_->add_request(request)) {
       CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
                           "No available resources to schedule request");
     }
+    LOG(INFO) << "in flux_master.cpp, after add_request to scheduler_";
   });
 }
 
@@ -285,7 +286,10 @@ void FLUXMaster::run() {
   loop_thread_ = std::thread([this]() {
     const auto timeout = absl::Milliseconds(500);
     while (!stoped_.load(std::memory_order_relaxed)) {
+      LOG(INFO) << "FLUXMaster loop step start.";
       scheduler_->step(timeout);
+      LOG(INFO) << "FLUXMaster loop step done."
+                << stoped_.load(std::memory_order_relaxed);
     }
     running_.store(false, std::memory_order_relaxed);
   });

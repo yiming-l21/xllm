@@ -21,6 +21,7 @@ limitations under the License.
 #include <unordered_map>
 
 #include "core/framework/context.h"
+#include "core/framework/model/causal_flux.h"
 #include "core/framework/model/causal_lm.h"
 #include "core/framework/model/causal_vlm.h"
 #include "core/framework/model/embedding_lm.h"
@@ -32,6 +33,9 @@ limitations under the License.
 #include "processors/input_processor.h"
 
 namespace xllm {
+
+using CausalFLUXFactory =
+    std::function<std::unique_ptr<CausalFLUX>(const Context& context)>;
 
 using CausalLMFactory =
     std::function<std::unique_ptr<CausalLM>(const Context& context)>;
@@ -59,6 +63,7 @@ using TokenizerArgsLoader =
 
 // TODO: add default args loader.
 struct ModelMeta {
+  CausalFLUXFactory causal_flux_factory;
   CausalLMFactory causal_lm_factory;
   CausalVLMFactory causal_vlm_factory;
   EmbeddingLMFactory embedding_lm_factory;
@@ -80,7 +85,8 @@ class ModelRegistry {
 
   static void register_causalvlm_factory(const std::string& name,
                                          CausalVLMFactory factory);
-
+  static void register_causalflux_factory(const std::string& name,
+                                          CausalFLUXFactory factory);
   static void register_embeddinglm_factory(const std::string& name,
                                            EmbeddingLMFactory factory);
 
@@ -104,6 +110,8 @@ class ModelRegistry {
 
   static EmbeddingLMFactory get_embeddinglm_factory(const std::string& name);
 
+  static CausalFLUXFactory get_causalflux_factory(const std::string& name);
+
   static ModelArgsLoader get_model_args_loader(const std::string& name);
 
   static QuantArgsLoader get_quant_args_loader(const std::string& name);
@@ -123,6 +131,8 @@ class ModelRegistry {
 std::unique_ptr<CausalLM> create_llm_model(const Context& context);
 
 std::unique_ptr<CausalVLM> create_vlm_model(const Context& context);
+
+std::unique_ptr<CausalFLUX> create_flux_model(const Context& context);
 
 std::unique_ptr<EmbeddingLM> create_embeddinglm_model(const Context& context);
 
@@ -156,6 +166,21 @@ std::unique_ptr<EmbeddingLM> create_embeddinglm_model(const Context& context);
 
 #define REGISTER_CAUSAL_VLM_MODEL(ModelType, ModelClass) \
   REGISTER_CAUSAL_VLM_MODEL_WITH_VARNAME(ModelType, ModelType, ModelClass)
+
+#define REGISTER_CAUSAL_FLUX_MODEL_WITH_VARNAME(                     \
+    VarName, ModelType, ModelClass)                                  \
+  const bool VarName##_registered = []() {                           \
+    ModelRegistry::register_causalflux_factory(                      \
+        #ModelType, [](const Context& context) {                     \
+          ModelClass model(context);                                 \
+          model->eval();                                             \
+          return std::make_unique<xllm::CausalFLUXImpl<ModelClass>>( \
+              std::move(model), context.get_tensor_options());       \
+        });                                                          \
+    return true;                                                     \
+  }()
+#define REGISTER_CAUSAL_FLUX_MODEL(ModelType, ModelClass) \
+  REGISTER_CAUSAL_FLUX_MODEL_WITH_VARNAME(ModelType, ModelType, ModelClass)
 
 // Macro to register a causal model with the ModelRegistry
 #define REGISTER_EMBEDDING_MODEL_WITH_VARNAME(VarName, ModelType, ModelClass) \

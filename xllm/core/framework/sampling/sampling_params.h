@@ -35,6 +35,7 @@ struct RequestSamplingParam {
   int64_t top_logprobs = 0;
   bool do_sample = false;
   bool is_embeddings = false;
+  bool is_image_features = false;
 };
 
 struct SamplingParameters {
@@ -74,7 +75,7 @@ struct SamplingParameters {
     params.logprobs = logprobs;
     params.max_top_logprobs = max_top_logprobs;
     params.is_embeddings = is_embeddings;
-
+    params.is_image_features = is_image_features;
     return params;
   }
 
@@ -127,7 +128,7 @@ struct SamplingParameters {
 
   // wheteher to get the embeddings of the tokens. used by embeddings model.
   bool is_embeddings = false;
-
+  bool is_image_features = false;
   // max number of top logprobs in the batch.
   // only used when logprobs is true.
   int64_t max_top_logprobs = 0;
@@ -150,6 +151,8 @@ struct SampleOutput {
 
   // [num_seq, ..., embed_dim] FloatTensor
   torch::Tensor embeddings;
+
+  torch::Tensor image_feature;
 };
 
 }  // namespace xllm

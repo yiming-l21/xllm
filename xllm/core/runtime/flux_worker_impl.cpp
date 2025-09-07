@@ -84,6 +84,7 @@ bool FLUXWorkerImpl::init_model(torch::ScalarType dtype,
 }
 
 std::optional<ForwardOutput> FLUXWorkerImpl::step(const ForwardInput& inputs) {
+  LOG(INFO) << "FLUXWorkerImpl::step called. in flux_worker_impl.cpp";
 #if defined(USE_NPU)
   c10_npu::SetDevice(device_.index());
 #elif defined(USE_MLU)
@@ -197,7 +198,10 @@ std::optional<ForwardOutput> FLUXWorkerImpl::step(const ForwardInput& inputs) {
   COUNTER_ADD(execution_latency_seconds_model, timer.elapsed_seconds());
   DeviceMonitor::get_instance().update_active_activation_memory(
       device_.index());
-
+  output.sample_output.next_tokens =
+      torch::tensor({1}, torch::dtype(torch::kInt64));
+  output.image_feature = hidden_states;
+  LOG(INFO) << "FLUXWorkerImpl::step done. in flux_worker_impl.cpp";
   return output;
 }
 

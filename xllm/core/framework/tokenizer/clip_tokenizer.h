@@ -15,22 +15,30 @@ limitations under the License.
 ==============================================================================*/
 
 #pragma once
+
 #include <absl/container/flat_hash_map.h>
 #include <re2/re2.h>
 
-#include <cstdint>
+#include <functional>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
-#include "sentencepiece/sentencepiece_processor.h"
 #include "tokenizer.h"
 #include "tokenizer_args.h"
-
 namespace xllm {
-
-// a tokenizer that uses google/SentencePiece
-class SentencePieceTokenizer : public Tokenizer {
+struct PairHash {
+  std::size_t operator()(
+      const std::pair<std::string_view, std::string_view>& p) const noexcept {
+    const std::hash<std::string_view> sv_hash;
+    std::size_t h1 = sv_hash(p.first);
+    std::size_t h2 = sv_hash(p.second);
+    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+  }
+};
+class CLIPTokenizer : public Tokenizer {
  public:
-  SentencePieceTokenizer(const std::string_view& dir_path,
-                         const TokenizerArgs& args);
+  CLIPTokenizer(const std::string_view& dir_path, const TokenizerArgs& args);
 
   bool encode(const std::string_view& text,
               std::vector<int32_t>* ids) const override;
@@ -50,18 +58,32 @@ class SentencePieceTokenizer : public Tokenizer {
  private:
   void load_special_tokens(const std::vector<SpecialToken>& special_tokens);
 
-  bool encode_internal(const std::string_view& text,
+  void load_vocab(const std::string& vocab_file_path);
+
+  void load_merges(const std::string& merges_file_path);
+
+  void encode_internal(const std::string_view& text,
                        std::vector<int32_t>* ids) const;
-  void decode_internal(const Slice<int32_t>& ids,
-                       size_t start,
-                       size_t end,
-                       std::stringstream* ss) const;
+
+  std::set<std::pair<std::string_view, std::string_view>> get_pairs(
+      const std::vector<std::string_view>& word) const;
+
+  std::vector<std::string_view> byte_pair_encode(
+      const std::string_view& token) const;
 
   std::string dir_path_;
 
   TokenizerArgs args_;
 
-  sentencepiece::SentencePieceProcessor sp_processor_;
+  // token to ids
+  absl::flat_hash_map<std::string, int32_t> encoder_;
+  // id to token
+  absl::flat_hash_map<int32_t, std::string> decoder_;
+
+  // a regex pattern to tokenize text
+  // N.B. RE2 doesn't support look-around assertions.
+  // https://github.com/google/re2/wiki/Syntax
+  std::unique_ptr<re2::RE2> regex_;
 
   // special tokens to ids
   absl::flat_hash_map<std::string, int32_t> special_token_encoder_;
@@ -74,6 +96,13 @@ class SentencePieceTokenizer : public Tokenizer {
 
   // token ids to add to the beginning of the input sequence
   std::vector<int32_t> prefix_token_ids_;
+
+  // bpe regulations
+  std::unordered_map<std::pair<std::string_view, std::string_view>,
+                     int32_t,
+                     PairHash>
+      bpe_ranks_;
+  std::unordered_set<std::string> vocab_set_;
 };
 
 }  // namespace xllm

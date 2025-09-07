@@ -89,6 +89,8 @@ void AsyncResponseProcessor::process_completed_request(
     request->log_statistic(end_2_end_latency_seconds);
 
     auto tokenizer = this->get_tls_tokenizer();
+    LOG(INFO) << "process_completed_request request_id: "
+              << request->request_id();
     if (callback != nullptr) {
       callback(request->generate_output(*tokenizer));
     } else {

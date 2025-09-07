@@ -121,7 +121,7 @@ struct ForwardOutput {
   torch::Tensor embedding;
 
   torch::Tensor expert_load_data;
-
+  torch::Tensor image_feature;
   int32_t prepared_layer_id;
 };
 
@@ -151,6 +151,7 @@ struct RawForwardInput {
   std::vector<TransferKVInfo> transfer_kv_infos;
   EplbInfo eplb_info;
   std::vector<std::vector<float>> embeddings;
+  std::vector<std::string> prompts;
   // num of prefill sequence in chunked prefill case
   uint32_t prefill_seq_len;
   // embedding ids of each sequence
@@ -168,6 +169,7 @@ struct RawSampleOutput {
 struct RawForwardOutput {
   std::vector<RawSampleOutput> outputs;  // num seqs
   std::vector<int64_t> expert_load_data;
+  torch::Tensor image_feature;
   int32_t prepared_layer_id;
 };
 

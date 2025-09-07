@@ -58,6 +58,8 @@ void Batch::add(Sequence* sequence, uint32_t allowed_max_token) {
        sequence->num_prompt_tokens()) &&
       mm_data.valid())
     mm_data_vec_.emplace_back(mm_data);
+
+  prompts_.emplace_back(sequence->prompt());
 }
 
 void Batch::add(const std::vector<Sequence*>& sequences) {
@@ -73,6 +75,7 @@ ForwardInput Batch::prepare_forward_input(uint32_t num_decoding_tokens,
                             allowed_max_tokens_,
                             input_embeddings_vec_,
                             mm_data_vec_,
+                            prompts_,
                             copy_in_cache_block_infos_,
                             copy_out_cache_block_infos_,
                             &args);
@@ -85,6 +88,7 @@ RawForwardInput Batch::prepare_forward_input() {
                             allowed_max_tokens_,
                             input_embeddings_vec_,
                             mm_data_vec_,
+                            prompts_,
                             copy_in_cache_block_infos_,
                             copy_out_cache_block_infos_,
                             nullptr);
@@ -125,6 +129,16 @@ void Batch::process_sample_output(const RawForwardOutput& raw_output,
             torch::tensor(raw_sam_output.tokens[t_idx].embeddings);
         seq->update_embeddings(embeddings);
       }
+      if (raw_output.image_feature.defined()) {
+        const int64_t num_seqs = raw_output.image_feature.size(0);
+        int64_t output_idx = 0;
+        for (auto* seq : sequences_) {
+          CHECK_LT(output_idx, num_seqs);
+          auto cur_seq_image_feature =
+              safe_to(raw_output.image_feature[output_idx++], torch::kFloat32);
+          seq->update_image_feature(cur_seq_image_feature);
+        }
+      }
       // Speculative decoding may append an EOS token at the beginning,
       // followed by bonus tokens, causing the sequence stopping check to fail.
       if (seq->finished()) {
@@ -147,7 +161,18 @@ void Batch::process_sample_output(const SampleOutput& sample_output,
       seq->update_embeddings(cur_seq_embed);
     }
   }
-
+  if (sample_output.image_feature.defined()) {
+    const int64_t num_seqs = sample_output.image_feature.size(0);
+    LOG(INFO) << "Process image feature output, num_seqs: " << num_seqs;
+    int64_t output_idx = 0;
+    for (auto* seq : sequences_) {
+      CHECK_LT(output_idx, num_seqs);
+      auto cur_seq_image_feature =
+          safe_to(sample_output.image_feature[output_idx++], torch::kFloat32);
+      LOG(INFO) << "cur_seq_image_feature: " << cur_seq_image_feature;
+      seq->update_image_feature(cur_seq_image_feature);
+    }
+  }
   // if sample_output.next_tokens not defined,
   // sample_output.next_tokens.size(0) value is 0,
   // this means all sequences are in prefill stage status.
@@ -223,6 +248,7 @@ void Batch::append_token_for_sequence(Sequence* seq,
 void Batch::process_embedding_output(const torch::Tensor& output_embedding) {
   Token token(0);
   if (output_embedding.defined()) {
+    LOG(INFO) << "Process embedding output" << output_embedding;
     int32_t slice_img_index = 0;
     for (auto* seq : sequences_) {  // TODO
       const auto& mm_data = seq->get_mm_data();

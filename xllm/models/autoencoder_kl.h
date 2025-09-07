@@ -1792,7 +1792,6 @@ class VAEEncoderImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    LOG(INFO) << "Loading state_dict for VAEEecoder";
     // conv_in_
     const auto conv_in_weight = state_dict.get_tensor("conv_in.weight");
     if (conv_in_weight.defined()) {
@@ -1955,7 +1954,6 @@ class VAEDecoderImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    LOG(INFO) << "Loading state_dict for VAEDecoder";
     // conv_in_
     const auto conv_in_weight = state_dict.get_tensor("conv_in.weight");
     if (conv_in_weight.defined()) {
@@ -2175,7 +2173,6 @@ class VAEImpl : public torch::nn::Module {
         }
       }
     }
-    LOG(INFO) << "VAE model loaded successfully.";
   }
 
  private:
