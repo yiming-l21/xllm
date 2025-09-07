@@ -28,6 +28,7 @@ limitations under the License.
 #include "core/common/macros.h"
 #include "core/common/types.h"
 #include "embedding.pb.h"
+#include "image_generation.pb.h"
 #include "multimodal.pb.h"
 #include "request.h"
 #include "request_output.h"
@@ -46,6 +47,9 @@ struct RequestParams {
                 const std::string& x_rid,
                 const std::string& x_rtime);
   RequestParams(const proto::EmbeddingRequest& request,
+                const std::string& x_rid,
+                const std::string& x_rtime);
+  RequestParams(const proto::ImageGenerationRequest& request,
                 const std::string& x_rid,
                 const std::string& x_rtime);
 
@@ -111,6 +115,8 @@ struct RequestParams {
 
   // wheteher to get the embeddings of the tokens. used by embeddings model.
   bool is_embeddings = false;
+
+  bool is_image_generation = false;
 
   // the list of strings to stop generating further tokens.
   // the output will contain the stop string.

@@ -39,6 +39,11 @@ std::string generate_chat_request_id() {
          short_uuid.random();
 }
 
+std::string generate_image_generation_request_id() {
+  return "imgcmpl-" + InstanceName::name()->get_name_hash() + "-" +
+         short_uuid.random();
+}
+
 }  // namespace
 
 RequestParams::RequestParams(const proto::CompletionRequest& request,
@@ -315,6 +320,20 @@ RequestParams::RequestParams(const proto::EmbeddingRequest& request,
   is_embeddings = true;
   max_tokens = 1;
   streaming = false;
+}
+
+RequestParams::RequestParams(const proto::ImageGenerationRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  request_id = generate_image_generation_request_id();
+  if (request.has_service_request_id()) {
+    service_request_id = request.service_request_id();
+  }
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+  is_image_generation = true;
+  streaming = false;
+  // TODO set other params for image generation
 }
 
 bool RequestParams::verify_params(OutputCallback callback) const {

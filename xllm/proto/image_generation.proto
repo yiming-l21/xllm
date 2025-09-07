@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+option go_package = "jd.com/jd-infer/xllm;xllm";
+package xllm.proto;
+
+import "common.proto";
+
+message ImageGenerationRequest {
+  // ID of the FLUX text-to-image model to use. Currently supported values are "flux-schnell" and "flux-dev".
+  string model = 1;
+
+  // Input text description for the model to generate corresponding images, supporting Chinese-English mixing.
+  // For Chinese, no more than 500 characters; for English, no more than 500 words. Extra length will be automatically truncated.
+  string prompt = 2;
+
+  // Resolution of the generated image. Optional values: "512*1024", "768*512", "768*1024", "1024*576", "576*1024", "1024*1024".
+  // Default value is "1024*1024".
+  optional string size = 3;
+
+  // Random seed value for image generation. If not provided, the algorithm will automatically generate a random number.
+  optional int32 seed = 4;
+
+  // Inference steps for image generation. If not provided:
+  // The "flux-schnell" model defaults to 4 steps, and the "flux-dev" model defaults to 50 steps.
+  optional int32 steps = 5;
+
+  // Guidance scale value, used to balance the model's creativity and the tightness of text prompts during image generation.
+  // A higher value makes the image more faithful to the text but reduces diversity; a lower value allows more creativity and increases image variation.
+  // Default value is 3.5.
+  optional int32 guidance = 6;
+
+  // Whether to temporarily offload some compute-intensive components from GPU to CPU during sampling 
+  // to reduce memory pressure or improve efficiency. 
+  // Can be enabled when system resources are limited or you want to speed up sampling. Defaults to False.
+  optional bool offload = 7;
+
+  // Whether to embed metadata such as the prompt text used during generation into the output image file, 
+  // which is convenient for subsequent tracking or sharing of generation settings. 
+  // Defaults to True.
+  optional bool add_sampling_metadata = 8;
+
+  // A unique identifier representing your end-user, which can help the server monitor and detect abuse.
+  optional string user = 9;
+
+  // ID used by the server to identify the request, which can be used for tracking, troubleshooting, etc.
+  optional string service_request_id = 10;
+}
+
+
+message ImageGenerationResponseData {
+  // Access URL of the generated image.
+  string image_url = 1;
+
+  // Width of the generated image (in pixels).
+  int32 width = 2;
+
+  // Height of the generated image (in pixels).
+  int32 height = 3;
+
+  // Random seed value used for generating the image (returns the specified value if provided in the request, otherwise returns the automatically generated one).
+  int32 seed = 4;
+}
+
+message ImageGenerationResponse {
+  // HTTP status code. 200 (HTTPStatus.OK) means the request is successful; other values mean the request fails.
+  // You can get the error code via the `code` field and detailed error information via the `message` field.
+  int32 status_code = 1;
+
+  // System-generated ID to mark this call.
+  string request_id = 2;
+
+  // Error code when the request fails; ignored if the request is successful.
+  string code = 3;
+
+  // Detailed error information when the request fails; ignored if the request is successful.
+  string message = 4;
+ 
+  // Task execution status. Possible values:
+  // SUCCESSED (task executed successfully), FAILED (task execution failed), CANCELED (task canceled), 
+  // PENDING (task queued), SUSPENDED (task suspended), RUNNING (task in progress).
+  string task_status = 5;
+
+  // List of generation results. Each element contains information such as the access URL of the generated image.
+  repeated ImageGenerationResponseData results = 6;
+
+  // Task result metrics, including TOTAL (expected number of generations), SUCCEEDED (number of successful generations), FAILED (number of failures).
+  map<string, int32> task_metrics = 7;
+
+  // Metering-related information. `image_count` records the number of images for metering.
+  map<string, int32> usage = 8;
+
+  // Unix timestamp when the server generates the response.
+  int64 created = 9;
+
+  // The actual model name used.
+  string model = 10;
+}
