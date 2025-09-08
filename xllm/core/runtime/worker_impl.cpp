@@ -99,7 +99,8 @@ WorkerImpl::~WorkerImpl() = default;
 
 bool WorkerImpl::allocate_kv_cache(
     const std::vector<std::vector<int64_t>>& kv_cache_shape) {
-  CHECK(model_ != nullptr) << "Model is not initialized.";
+  CHECK(model_ != nullptr || mm_model_ != nullptr)
+      << "Model is not initialized.";
   CHECK(kv_caches_.empty()) << "KV caches are already initialized.";
 
   // create a KVCache for each layer
@@ -134,7 +135,8 @@ bool WorkerImpl::allocate_host_kv_cache(
     return true;
   }
 
-  CHECK(model_ != nullptr) << "Model is not initialized.";
+  CHECK(model_ != nullptr || mm_model_ != nullptr)
+      << "Model is not initialized.";
   CHECK(host_kv_caches_.empty()) << "KV caches are already initialized.";
 
   std::vector<std::vector<int64_t>> host_kv_cache_shape = device_kv_cache_shape;
@@ -173,7 +175,8 @@ bool WorkerImpl::allocate_kv_cache_with_transfer(
     uint64_t kv_cache_size,
     const std::vector<std::vector<int64_t>>& kv_cache_shape) {
 #if defined(USE_NPU)
-  CHECK(model_ != nullptr) << "Model is not initialized.";
+  CHECK(model_ != nullptr || mm_model_ != nullptr)
+      << "Model is not initialized.";
   CHECK(kv_caches_.empty()) << "KV caches are already initialized.";
 
   if (FLAGS_kv_cache_transfer_type == "LlmDataDist") {
@@ -209,7 +212,8 @@ bool WorkerImpl::allocate_kv_cache_with_transfer(
 bool WorkerImpl::allocate_kv_cache_with_transfer(
     std::shared_ptr<KVCacheTransfer> kv_cache_transfer,
     const std::vector<std::vector<int64_t>>& kv_cache_shape) {
-  CHECK(model_ != nullptr) << "Model is not initialized.";
+  CHECK(model_ != nullptr || mm_model_ != nullptr)
+      << "Model is not initialized.";
   CHECK(kv_caches_.empty()) << "KV caches are already initialized.";
 
   kv_cache_transfer_ = kv_cache_transfer;
@@ -276,7 +280,8 @@ bool WorkerImpl::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
 }
 
 std::tuple<int64_t, int64_t> WorkerImpl::estimate_kv_cache_capacity() {
-  CHECK(model_ != nullptr) << "Model is not initialized.";
+  CHECK(model_ != nullptr || mm_model_ != nullptr)
+      << "Model is not initialized.";
   size_t torch_cache = 0;
   size_t torch_largest_block = 0;
 #if defined(USE_NPU)
@@ -591,8 +596,12 @@ bool WorkerImpl::init_model(const std::string& model_weights_path) {
 }
 
 void WorkerImpl::load_model(std::unique_ptr<ModelLoader> loader) {
-  CHECK(model_ != nullptr) << "Model is not initialized.";
-  model_->load_model(std::move(loader));
+  CHECK(model_ != nullptr || mm_model_ != nullptr)
+      << "Model is not initialized.";
+  if (model_ != nullptr)
+    model_->load_model(std::move(loader));
+  else
+    mm_model_->load_model(std::move(loader));
 }
 
 folly::SemiFuture<bool> WorkerImpl::allocate_kv_cache_async(

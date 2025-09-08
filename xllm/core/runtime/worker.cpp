@@ -33,6 +33,7 @@ limitations under the License.
 #include "runtime/embed_vlm_worker_impl.h"
 #include "runtime/embed_worker_impl.h"
 #include "runtime/llm_worker_impl.h"
+#include "runtime/mm_worker_impl.h"
 #include "runtime/speculative_worker_impl.h"
 #include "runtime/vlm_worker_impl.h"
 #include "util/timer.h"
@@ -48,6 +49,9 @@ Worker::Worker(const ParallelArgs& parallel_args,
     impl_ = new LLMWorkerImpl(parallel_args, device, options);
   } else if (worker_type == WorkerType::VLM) {
     impl_ = new VLMWorkerImpl(parallel_args, device, options);
+  } else if (worker_type == WorkerType::MM) {
+    LOG(INFO) << "constructing MM worker impl";
+    impl_ = new MMWorkerImpl(parallel_args, device, options);
   } else if (worker_type == WorkerType::ELM) {
     impl_ = new EmbedWorkerImpl(parallel_args, device, options);
   } else if (worker_type == WorkerType::EVLM) {

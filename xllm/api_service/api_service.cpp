@@ -25,6 +25,7 @@ limitations under the License.
 #include "completion.pb.h"
 #include "core/common/metrics.h"
 #include "core/runtime/llm_master.h"
+#include "core/runtime/mm_master.h"
 #include "core/runtime/vlm_master.h"
 #include "core/util/closure_guard.h"
 #include "embedding.pb.h"
@@ -49,18 +50,14 @@ APIService::APIService(Master* master,
     embedding_service_impl_ =
         ServiceImplFactory<EmbeddingServiceImpl>::create_service_impl(
             llm_master, model_names);
-    image_generation_service_impl_ =
-        ServiceImplFactory<ImageGenerationServiceImpl>::create_service_impl(
-            dynamic_cast<LLMMaster*>(master), model_names);
   } else if (FLAGS_backend == "vlm") {
     auto vlm_master = dynamic_cast<VLMMaster*>(master);
     mm_chat_service_impl_ =
         std::make_unique<MMChatServiceImpl>(vlm_master, model_names);
   } else if (FLAGS_backend == "mm") {
-    // TODO replace mmmaster
     image_generation_service_impl_ =
-        ServiceImplFactory<ImageGenerationServiceImpl>::create_service_impl(
-            dynamic_cast<LLMMaster*>(master), model_names);
+        std::make_unique<ImageGenerationServiceImpl>(
+            dynamic_cast<MMMaster*>(master), model_names);
   }
   models_service_impl_ =
       ServiceImplFactory<ModelsServiceImpl>::create_service_impl(

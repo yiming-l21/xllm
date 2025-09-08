@@ -24,6 +24,7 @@ limitations under the License.
 #include "framework/batch/batch.h"
 #include "framework/kv_cache/kv_cache.h"
 #include "framework/model/causal_lm.h"
+#include "framework/model/diffusion_mm.h"
 #include "framework/model/model_input_params.h"
 #include "runtime/executor_impl.h"
 #include "runtime/options.h"
@@ -32,11 +33,14 @@ namespace xllm {
 
 class Executor final {
  public:
-  Executor(CausalLM* model,
-           const ModelArgs& args,
-           const torch::Device& device,
-           const runtime::Options& options);
-
+  explicit Executor(CausalLM* model,
+                    const ModelArgs& args,
+                    const torch::Device& device,
+                    const runtime::Options& options);
+  explicit Executor(DiffusionMM* model,
+                    const ModelArgs& args,
+                    const torch::Device& device,
+                    const runtime::Options& options);
   virtual ~Executor() = default;
 
   ForwardInput prepare_inputs(Batch& batch);

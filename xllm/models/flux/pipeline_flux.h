@@ -816,24 +816,9 @@ class FluxPipelineImpl : public torch::nn::Module {
     clip_text_model_->load_model(std::move(clip_loader));
     clip_text_model_->to(_execution_device);
   }
-  torch::Tensor logits(const torch::Tensor& hidden_states,
-                       const torch::Tensor& seleted_idxes) {
-    return torch::Tensor();
-  }
-
-  void prepare_expert_weight(int32_t layer_id,
-                             const std::vector<int32_t>& expert_ids) {}
-  void update_expert_weight(int32_t layer_id) {}
-
-#if defined(USE_NPU)
-  hf::LlmHead get_lm_head() {}
-  void set_lm_head(hf::LlmHead& head) {}
-  hf::AtbWordEmbedding get_word_embedding() {}
-  void set_word_embedding(hf::AtbWordEmbedding& embedding) {}
-#endif
 };
 TORCH_MODULE(FluxPipeline);
-REGISTER_CAUSAL_MODEL(flux, FluxPipeline);
+REGISTER_DIFFUSION_MM_MODEL(flux, FluxPipeline);
 REGISTER_MODEL_ARGS(flux, [&] {
   LOAD_ARG_OR(model_type, "model_type", "flux");
   //   //vae

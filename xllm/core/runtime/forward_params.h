@@ -33,6 +33,7 @@ class WorkerType {
     INVALID = 0,
     LLM,   // LLM
     VLM,   // VLM
+    MM,    // MM
     ELM,   // Embedding LM
     EVLM,  // Embedding VLM
   };
@@ -47,6 +48,8 @@ class WorkerType {
       value_ = ELM;
     } else if (str == "EVLM") {
       value_ = EVLM;
+    } else if (str == "MM") {
+      value_ = MM;
     } else {
       value_ = INVALID;
     }
@@ -71,6 +74,8 @@ class WorkerType {
       return "ELM";
     } else if (this->value_ == EVLM) {
       return "EVLM";
+    } else if (this->value_ == MM) {
+      return "MM";
     } else {
       return "INVALID";
     }

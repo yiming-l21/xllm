@@ -30,7 +30,7 @@ using ImageGenerationCall = NonStreamCall<proto::ImageGenerationRequest,
 class ImageGenerationServiceImpl final
     : public APIServiceImpl<ImageGenerationCall> {
  public:
-  ImageGenerationServiceImpl(LLMMaster* master,
+  ImageGenerationServiceImpl(MMMaster* master,
                              const std::vector<std::string>& models);
 
   // brpc call_data needs to use shared_ptr

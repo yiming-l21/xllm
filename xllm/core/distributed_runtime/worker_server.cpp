@@ -159,9 +159,12 @@ void WorkerServer::create_server(const runtime::Options& options,
       worker_global_rank, world_size, dp_size, nullptr, ep_size);
 #endif
 
-  WorkerType worker_type =
-      (options.task_type() == "generate") ? WorkerType::LLM : WorkerType::ELM;
-  CHECK(worker_type == WorkerType::LLM || worker_type == WorkerType::ELM)
+  WorkerType worker_type = (options.task_type() == "generate") ? WorkerType::LLM
+                           : (options.task_type() == "mm_generate")
+                               ? WorkerType::MM
+                               : WorkerType::VLM;
+  CHECK(worker_type == WorkerType::LLM || worker_type == WorkerType::ELM ||
+        worker_type == WorkerType::MM)
       << "Multi Node only support LLM and ELM Now, but get task type = "
       << options.task_type();
   std::unique_ptr<Worker> worker =

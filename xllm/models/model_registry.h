@@ -23,6 +23,7 @@ limitations under the License.
 #include "core/framework/context.h"
 #include "core/framework/model/causal_lm.h"
 #include "core/framework/model/causal_vlm.h"
+#include "core/framework/model/diffusion_mm.h"
 #include "core/framework/model/embedding_lm.h"
 #include "core/framework/parallel_state.h"
 #include "core/framework/tokenizer/tokenizer_args.h"
@@ -38,6 +39,9 @@ using CausalLMFactory =
 
 using CausalVLMFactory =
     std::function<std::unique_ptr<CausalVLM>(const Context& context)>;
+
+using DiffusionMMFactory =
+    std::function<std::unique_ptr<DiffusionMM>(const Context& context)>;
 
 using EmbeddingLMFactory =
     std::function<std::unique_ptr<EmbeddingLM>(const Context& context)>;
@@ -61,6 +65,7 @@ using TokenizerArgsLoader =
 struct ModelMeta {
   CausalLMFactory causal_lm_factory;
   CausalVLMFactory causal_vlm_factory;
+  DiffusionMMFactory diffusion_mm_factory;
   EmbeddingLMFactory embedding_lm_factory;
   InputProcessorFactory input_processor_factory;
   ImageProcessorFactory image_processor_factory;
@@ -80,6 +85,9 @@ class ModelRegistry {
 
   static void register_causalvlm_factory(const std::string& name,
                                          CausalVLMFactory factory);
+
+  static void register_diffusionmm_factory(const std::string& name,
+                                           DiffusionMMFactory factory);
 
   static void register_embeddinglm_factory(const std::string& name,
                                            EmbeddingLMFactory factory);
@@ -102,6 +110,8 @@ class ModelRegistry {
 
   static CausalVLMFactory get_causalvlm_factory(const std::string& name);
 
+  static DiffusionMMFactory get_diffusionmm_factory(const std::string& name);
+
   static EmbeddingLMFactory get_embeddinglm_factory(const std::string& name);
 
   static ModelArgsLoader get_model_args_loader(const std::string& name);
@@ -123,6 +133,8 @@ class ModelRegistry {
 std::unique_ptr<CausalLM> create_llm_model(const Context& context);
 
 std::unique_ptr<CausalVLM> create_vlm_model(const Context& context);
+
+std::unique_ptr<DiffusionMM> create_mm_model(const Context& context);
 
 std::unique_ptr<EmbeddingLM> create_embeddinglm_model(const Context& context);
 
@@ -156,6 +168,22 @@ std::unique_ptr<EmbeddingLM> create_embeddinglm_model(const Context& context);
 
 #define REGISTER_CAUSAL_VLM_MODEL(ModelType, ModelClass) \
   REGISTER_CAUSAL_VLM_MODEL_WITH_VARNAME(ModelType, ModelType, ModelClass)
+
+#define REGISTER_DIFFUSION_MM_MODEL_WITH_VARNAME(                     \
+    VarName, ModelType, ModelClass)                                   \
+  const bool VarName##_registered = []() {                            \
+    ModelRegistry::register_diffusionmm_factory(                      \
+        #ModelType, [](const Context& context) {                      \
+          ModelClass model(context);                                  \
+          model->eval();                                              \
+          return std::make_unique<xllm::DiffusionMMImpl<ModelClass>>( \
+              std::move(model), context.get_tensor_options());        \
+        });                                                           \
+    return true;                                                      \
+  }()
+
+#define REGISTER_DIFFUSION_MM_MODEL(ModelType, ModelClass) \
+  REGISTER_DIFFUSION_MM_MODEL_WITH_VARNAME(ModelType, ModelType, ModelClass)
 
 // Macro to register a causal model with the ModelRegistry
 #define REGISTER_EMBEDDING_MODEL_WITH_VARNAME(VarName, ModelType, ModelClass) \

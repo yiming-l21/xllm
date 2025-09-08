@@ -31,6 +31,7 @@ limitations under the License.
 #endif
 #include "framework/eplb/eplb_executor.h"
 #include "framework/model/causal_lm.h"
+#include "framework/model/diffusion_mm.h"
 #include "framework/model/embedding_lm.h"
 #include "framework/model/model_input_params.h"
 #include "framework/sampling/sampler.h"
@@ -216,7 +217,8 @@ class WorkerImpl {
   std::unique_ptr<Sampler> sampler_;
 
   std::unique_ptr<EplbExecutor> eplb_executor_;
-
+  // diffusion MM model
+  std::unique_ptr<DiffusionMM> mm_model_;
   // params for enable_schedule_overlap case
   // an output to store the result of last step
   ForwardOutput last_step_output_;

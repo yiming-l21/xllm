@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "common/instance_name.h"
 #include "framework/request/request_params.h"
-#include "runtime/llm_master.h"
+#include "runtime/mm_master.h"
 #include "util/utils.h"
 #include "util/uuid.h"
 
@@ -70,7 +70,7 @@ bool send_result_to_client_brpc(std::shared_ptr<ImageGenerationCall> call,
 }  // namespace
 
 ImageGenerationServiceImpl::ImageGenerationServiceImpl(
-    LLMMaster* master,
+    MMMaster* master,
     const std::vector<std::string>& models)
     : APIServiceImpl(master, models) {}
 

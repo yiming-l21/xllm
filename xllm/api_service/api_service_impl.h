@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "call.h"
 #include "core/runtime/llm_master.h"
-
+#include "core/runtime/mm_master.h"
 namespace xllm {
 
 template <typename T>
@@ -28,6 +28,11 @@ class APIServiceImpl {
  public:
   APIServiceImpl(LLMMaster* master, const std::vector<std::string>& models)
       : master_(master), models_(models.begin(), models.end()) {
+    CHECK(master != nullptr);
+    CHECK(!models_.empty());
+  }
+  APIServiceImpl(MMMaster* master, const std::vector<std::string>& models)
+      : mm_master_(master), models_(models.begin(), models.end()) {
     CHECK(master != nullptr);
     CHECK(!models_.empty());
   }
@@ -42,6 +47,7 @@ class APIServiceImpl {
 
  protected:
   LLMMaster* master_;
+  MMMaster* mm_master_;
   absl::flat_hash_set<std::string> models_;
 };
 
