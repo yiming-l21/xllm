@@ -48,9 +48,25 @@ namespace xllm {
 DITMaster::DITMaster(const Options& options)
     : Master(options, EngineType::DIT) {
   // TODO: init master
+  CHECK(engine_->init());
+  ContinuousScheduler::Options scheduler_options;
+  scheduler_options.max_tokens_per_batch(options.max_tokens_per_batch())
+      .max_seqs_per_batch(options.max_seqs_per_batch())
+      .max_tokens_per_chunk_for_prefill(
+          options.max_tokens_per_chunk_for_prefill())
+      .enable_disagg_pd(options_.enable_disagg_pd())
+      .enable_chunked_prefill(options_.enable_chunked_prefill())
+      .instance_name(options_.instance_name())
+      .instance_role(options_.instance_role())
+      .kv_cache_transfer_mode(options_.kv_cache_transfer_mode())
+      .enable_service_routing(options_.enable_service_routing());
+  scheduler_ = create_continuous_scheduler(engine_.get(), scheduler_options);
   InstanceInfo instance_info;
-  XServiceClient::get_instance()->register_instance(instance_info);
-  threadpool_ = std::make_unique<ThreadPool>(options_.num_handling_threads());
+  if (options_.enable_service_routing()) {
+    auto& instance_info = scheduler_->get_instance_info();
+    XServiceClient::get_instance()->register_instance(instance_info);
+  }
+  threadpool_ = std::make_unique<ThreadPool>(options.num_handling_threads());
 }
 
 DITMaster::~DITMaster() {
@@ -127,7 +143,7 @@ void DITMaster::run() {
   loop_thread_ = std::thread([this]() {
     const auto timeout = absl::Milliseconds(500);
     while (!stoped_.load(std::memory_order_relaxed)) {
-      // scheduler_->step(timeout);
+      scheduler_->step(timeout);
     }
     running_.store(false, std::memory_order_relaxed);
   });
