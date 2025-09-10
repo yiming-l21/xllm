@@ -68,10 +68,10 @@ void ImageGenerationServiceImpl::process_async(
   const auto& rpc_request = call->request();
   // check if model is supported
   const auto& model = rpc_request.model();
-  // if (!models_.contains(model)) {
-  //   call->finish_with_error(StatusCode::UNKNOWN, "Model not supported");
-  //   return;
-  // }
+  if (!models_.contains(model)) {
+    call->finish_with_error(StatusCode::UNKNOWN, "Model not supported");
+    return;
+  }
   // create RequestParams for image generation request
   // set is_image_generation and max_tokens = 1 to control engine step once.
   ImageRequestParams request_params(

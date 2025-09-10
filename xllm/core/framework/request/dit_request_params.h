@@ -57,4 +57,9 @@ struct InputParams {
 
   std::optional<proto::Tensor> latents;
 };
+
+struct DITRequestData {
+  InputParams input_params;
+  GenerationParams generation_params;
+};
 }  // namespace xllm

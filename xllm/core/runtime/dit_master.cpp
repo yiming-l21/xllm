@@ -109,9 +109,7 @@ void DITMaster::run() {
   loop_thread_ = std::thread([this]() {
     const auto timeout = absl::Milliseconds(500);
     while (!stoped_.load(std::memory_order_relaxed)) {
-      LOG(INFO) << "before schduler";
-      scheduler_->step(timeout);
-      LOG(INFO) << "after schduler";
+      // scheduler_->step(timeout);
     }
     running_.store(false, std::memory_order_relaxed);
   });

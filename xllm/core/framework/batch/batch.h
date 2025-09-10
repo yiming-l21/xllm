@@ -21,6 +21,7 @@ limitations under the License.
 #include <limits>
 #include <vector>
 
+#include "framework/request/dit_request_params.h"
 #include "framework/request/mm_data.h"
 #include "framework/request/sequence.h"
 #include "runtime/forward_params.h"
@@ -102,6 +103,9 @@ class Batch {
 
   // mm_data in the batch
   std::vector<MMData> mm_data_vec_;
+
+  // dit_request_data in the batch
+  std::vector<DITRequestData> dit_request_data_vec_;
 };
 
 }  // namespace xllm
