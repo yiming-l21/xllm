@@ -122,9 +122,10 @@ struct ForwardOutput {
 
   torch::Tensor expert_load_data;
 
+  int32_t prepared_layer_id;
+
   // dit related output
   torch::Tensor image;
-  int32_t prepared_layer_id;
 };
 
 // Model input with raw data, which will be

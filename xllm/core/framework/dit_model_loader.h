@@ -26,31 +26,60 @@ limitations under the License.
 #include "core/framework/tokenizer/tokenizer_args.h"
 #include "model_loader.h"
 namespace xllm {
+class DITSubfolderLoader {
+ public:
+  DITSubfolderLoader(const std::string& folder_path,
+                     const std::string& component_name);
+  const ModelArgs& model_args() const { return args_; }
+  const QuantArgs& quant_args() const { return quant_args_; }
+  const TokenizerArgs& tokenizer_args() const { return tokenizer_args_; }
+  std::vector<std::unique_ptr<StateDict>>& get_state_dicts();
+  std::string model_weights_path() const { return model_weights_path_; }
+
+ private:
+  bool load_args(const std::string& model_weights_path);
+  bool load_model_args(const std::string& model_weights_path);
+  bool load_tokenizer_args(const std::string& model_weights_path);
+  // model args
+  ModelArgs args_;
+  // quantization args
+  QuantArgs quant_args_;
+  // tokenizer args
+  TokenizerArgs tokenizer_args_;
+
+  std::string model_weights_path_;
+
+  std::string component_name_;
+
+  // sorted model weights files
+  std::vector<std::string> model_weights_files_;
+  // models weights tensors
+  std::vector<std::unique_ptr<StateDict>> state_dicts_;
+};
 class DITModelLoader {
  public:
   explicit DITModelLoader(const std::string& model_root_path);
 
-  const ModelLoader* get_sub_model_loader_by_name(
+  const DITSubfolderLoader* get_sub_model_loader_by_name(
       const std::string& component_name) const;
 
-  const ModelLoader* get_sub_model_loader_by_folder(
+  const DITSubfolderLoader* get_sub_model_loader_by_folder(
       const std::string& component_folder) const;
 
-  const std::vector<ModelLoader*>& get_all_sub_model_loaders() const;
+  const std::vector<DITSubfolderLoader*>& get_all_sub_model_loaders() const;
 
   std::vector<std::string> get_all_sub_model_names() const;
-  ;
 
   bool has_sub_model(const std::string& component_name) const;
-  ;
 
  private:
   std::string model_root_path_;
 
-  std::unordered_map<std::string, std::unique_ptr<ModelLoader>> name_to_loader_;
+  std::unordered_map<std::string, std::unique_ptr<DITSubfolderLoader>>
+      name_to_loader_;
 
   std::unordered_map<std::string, std::string> name_to_folder_;
 
-  std::vector<ModelLoader*> sub_model_loaders_;
+  std::vector<DITSubfolderLoader*> sub_model_loaders_;
 };
 }  // namespace xllm

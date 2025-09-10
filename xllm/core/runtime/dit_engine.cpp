@@ -19,7 +19,7 @@ limitations under the License.
 #include <glog/logging.h>
 #include <sys/sysinfo.h>
 
-#include "core/framework/flux_model_loader.h"
+#include "core/framework/dit_model_loader.h"
 #include "worker.h"
 
 namespace xllm {
