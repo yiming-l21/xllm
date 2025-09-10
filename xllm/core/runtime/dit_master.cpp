@@ -93,8 +93,26 @@ void DITMaster::handle_request(ImageRequestParams sp,
   // add into the queue
   threadpool_->schedule(
       [this, sp = std::move(sp), callback = std::move(cb), call]() mutable {
-        // TODO: generate request and add to scheduler
-        LOG(INFO) << "in MM_master.cpp, after add_request to scheduler_";
+        AUTO_COUNTER(request_handling_latency_seconds_completion);
+
+        // remove the pending request after scheduling
+        SCOPE_GUARD([this] { scheduler_->decr_pending_requests(); });
+
+        Timer timer;
+        // verify the prompt
+        if (!sp.verify_params(callback)) {
+          return;
+        }
+
+        auto request = generate_request(sp, call, callback);
+        if (!request) {
+          return;
+        }
+
+        if (!scheduler_->add_request(request)) {
+          CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
+                              "No available resources to schedule request");
+        }
       });
 }
 
@@ -127,6 +145,26 @@ void DITMaster::generate() {
   running_.store(true, std::memory_order_relaxed);
   scheduler_->generate();
   running_.store(false, std::memory_order_relaxed);
+}
+
+std::shared_ptr<Request> DITMaster::generate_request(
+    ImageRequestParams sp,
+    std::optional<Call*> call,
+    ImageOutputCallback callback) {
+  DITRequestState req_state(std::move(sp.input_params),
+                            std::move(sp.generation_params));
+
+  auto request = std::make_shared<Request>(sp.request_id,
+                                           sp.x_request_id,
+                                           sp.x_request_time,
+                                           std::move(req_state),
+                                           sp.service_request_id,
+                                           sp.offline,
+                                           sp.slo_ms,
+                                           sp.priority);
+
+  // add one sequence, rest will be added by scheduler
+  return request;
 }
 
 void DITMaster::get_cache_info(std::vector<uint64_t>& cluster_ids,

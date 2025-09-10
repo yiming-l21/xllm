@@ -75,6 +75,11 @@ class DITMaster : public Master {
                       const int32_t dp_size);
 
  private:
+  std::shared_ptr<Request> generate_request(ImageRequestParams sp,
+                                            std::optional<Call*> call,
+                                            ImageOutputCallback callback);
+
+ private:
   std::unique_ptr<Scheduler> scheduler_;
 
   // model args

@@ -157,8 +157,11 @@ struct DITRequestState {
                   GenerationParams&& generation_params)
       : input_params_(std::move(input_params)),
         generation_params_(std::move(generation_params)) {}
+  DITRequestState() {}
+  InputParams& input_params() { return input_params_; }
+  GenerationParams& generation_params() { return generation_params_; }
 
- public:
+ private:
   InputParams input_params_;
   GenerationParams generation_params_;
 };

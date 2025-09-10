@@ -65,6 +65,7 @@ Request::Request(const std::string& request_id,
       offline_(offline),
       priority_(priority),
       slo_ms_(slo_ms) {}
+
 void Request::create_sequences_group() {
   SequenceParams sequence_params;
   sequence_params.seq_capacity = state_.seq_capacity;
