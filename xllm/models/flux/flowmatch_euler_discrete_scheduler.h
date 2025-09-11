@@ -1,5 +1,4 @@
 #pragma once
-// lym
 #include <torch/torch.h>
 
 #include <algorithm>
@@ -442,8 +441,7 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
   }
 };
 TORCH_MODULE(FlowMatchEulerDiscreteScheduler);
-REGISTER_MODEL_ARGS(flowmatcheulerdiscretedescheduler, [&] {
-  LOAD_ARG_OR(model_type, "model_type", "flowmatcheulerdiscretedescheduler");
+REGISTER_MODEL_ARGS(FlowMatchEulerDiscreteScheduler, [&] {
   LOAD_ARG_OR(scheduler_num_train_timesteps, "num_train_timesteps", 1000);
   LOAD_ARG_OR(scheduler_shift, "shift", 1);
   LOAD_ARG_OR(scheduler_use_dynamic_shifting, "use_dynamic_shifting", true);
@@ -451,10 +449,5 @@ REGISTER_MODEL_ARGS(flowmatcheulerdiscretedescheduler, [&] {
   LOAD_ARG_OR(scheduler_max_shift, "max_shift", 1.15f);
   LOAD_ARG_OR(scheduler_base_image_seq_len, "base_image_seq_len", 256);
   LOAD_ARG_OR(scheduler_max_image_seq_len, "max_image_seq_len", 4096);
-
-  LOAD_ARG_OR(n_layers, "num_hidden_layers", 28);
-  LOAD_ARG_OR(n_heads, "num_attention_heads", 28);
-  LOAD_ARG_OR(head_dim, "head_dim", 56);
-  LOAD_ARG_OR(max_position_embeddings, "max_position_embeddings", 128000);
 });
 }  // namespace xllm::hf
