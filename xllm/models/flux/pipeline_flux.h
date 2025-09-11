@@ -799,7 +799,22 @@ class FluxPipelineImpl : public torch::nn::Module {
     fout.close();
     return FluxPipelineOutput{{image}};
   }
+  void prepare_expert_weight(
+      int32_t layer_id,
+      const std::vector<int32_t>& expert_ids) {}
+void update_expert_weight(int32_t layer_id){}
 
+
+#if defined(USE_NPU)
+ hf::LlmHead get_lm_head() {}
+void set_lm_head(hf::LlmHead& head) {}
+hf::AtbWordEmbedding get_word_embedding(){}
+void set_word_embedding(hf::AtbWordEmbedding& embedding){}
+#endif
+torch::Tensor logits(const torch::Tensor& hidden_states,
+                               const torch::Tensor& selected_idxes) {
+  return torch::Tensor();
+}
   void load_model(std::unique_ptr<ModelLoader> loader) {
     std::string model_path = loader->model_weights_path();
     auto transformer_loader = ModelLoader::create(model_path + "/transformer");
@@ -818,7 +833,7 @@ class FluxPipelineImpl : public torch::nn::Module {
   }
 };
 TORCH_MODULE(FluxPipeline);
-REGISTER_DIFFUSION_MM_MODEL(flux, FluxPipeline);
+REGISTER_CAUSAL_MODEL(flux, FluxPipeline);
 REGISTER_MODEL_ARGS(flux, [&] {
   LOAD_ARG_OR(model_type, "model_type", "flux");
   //   //vae
