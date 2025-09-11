@@ -76,8 +76,7 @@ void ImageGenerationServiceImpl::process_async(
   // set is_image_generation and max_tokens = 1 to control engine step once.
   ImageRequestParams request_params(
       rpc_request, call->get_x_request_id(), call->get_x_request_time());
-  // TODO only support input_str for now
-  auto& input = rpc_request.input().prompt();
+
   // schedule the request
   master_->handle_request(
       std::move(request_params),
