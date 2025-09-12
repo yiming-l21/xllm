@@ -25,12 +25,9 @@ limitations under the License.
 
 namespace xllm {
 
-class Scheduler {
+class SchedulerBase {
  public:
-  virtual ~Scheduler() = default;
-
-  // add a new request to scheduler.
-  virtual bool add_request(std::shared_ptr<Request>& request) = 0;
+  virtual ~SchedulerBase() = default;
 
   // scheduler forward execute
   virtual void step(const absl::Duration& timeout) = 0;
@@ -49,6 +46,14 @@ class Scheduler {
                                    std::vector<int64_t>& tbt) = 0;
 
   virtual const InstanceInfo& get_instance_info() = 0;
+};
+
+class Scheduler : public SchedulerBase {
+ public:
+  virtual ~Scheduler() = default;
+
+  // add a new request to scheduler.
+  virtual bool add_request(std::shared_ptr<Request>& request) = 0;
 };
 
 }  // namespace xllm
