@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "common.pb.h"
+#include "dit_request_state.h"
 #include "request_state.h"
 #include "sequences_group.h"
 #include "stopping_checker.h"
@@ -39,6 +40,14 @@ class Request {
           const std::string& x_request_id,
           const std::string& x_request_time,
           const RequestState& state,
+          const std::string& service_request_id = "",
+          bool offline = false,
+          int32_t slo_ms = 0,
+          RequestPriority priority = RequestPriority::NORMAL);
+  Request(const std::string& request_id,
+          const std::string& x_request_id,
+          const std::string& x_request_time,
+          const DiTRequestState& state,
           const std::string& service_request_id = "",
           bool offline = false,
           int32_t slo_ms = 0,
@@ -91,7 +100,7 @@ class Request {
   const RequestPriority priority() const { return priority_; }
 
   RequestState& state() { return state_; }
-
+  DiTRequestState& dit_state() { return dit_state_; }
   void update_connection_status();
 
  private:
@@ -109,7 +118,7 @@ class Request {
   std::string x_request_time_;
 
   RequestState state_;
-
+  DiTRequestState dit_state_;
   // list of sequences to generate completions for the prompt
   // use deque instead of vector to avoid no-copy move for Sequence
   //  std::deque<Sequence> sequences;

@@ -69,6 +69,7 @@ bool DiTFolderLoader::load_args(const std::string& model_weights_path) {
     LOG(ERROR) << "Failed to load model args from " << model_weights_path;
     return false;
   }
+  debug_info();
   return true;
 }
 

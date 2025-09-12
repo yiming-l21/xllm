@@ -48,9 +48,25 @@ namespace xllm {
 DiTMaster::DiTMaster(const Options& options)
     : Master(options, EngineType::DIT) {
   // TODO: init master
+  CHECK(engine_->init());
+  ContinuousScheduler::Options scheduler_options;
+  scheduler_options.max_tokens_per_batch(options.max_tokens_per_batch())
+      .max_seqs_per_batch(options.max_seqs_per_batch())
+      .max_tokens_per_chunk_for_prefill(
+          options.max_tokens_per_chunk_for_prefill())
+      .enable_disagg_pd(options_.enable_disagg_pd())
+      .enable_chunked_prefill(options_.enable_chunked_prefill())
+      .instance_name(options_.instance_name())
+      .instance_role(options_.instance_role())
+      .kv_cache_transfer_mode(options_.kv_cache_transfer_mode())
+      .enable_service_routing(options_.enable_service_routing());
+  scheduler_ = create_continuous_scheduler(engine_.get(), scheduler_options);
   InstanceInfo instance_info;
-  XServiceClient::get_instance()->register_instance(instance_info);
-  threadpool_ = std::make_unique<ThreadPool>(options_.num_handling_threads());
+  if (options_.enable_service_routing()) {
+    auto& instance_info = scheduler_->get_instance_info();
+    XServiceClient::get_instance()->register_instance(instance_info);
+  }
+  threadpool_ = std::make_unique<ThreadPool>(options.num_handling_threads());
 }
 
 DiTMaster::~DiTMaster() {
@@ -93,8 +109,34 @@ void DiTMaster::handle_request(DiTRequestParams sp,
   // add into the queue
   threadpool_->schedule(
       [this, sp = std::move(sp), callback = std::move(cb), call]() mutable {
-        // TODO: generate request and add to scheduler
-        LOG(INFO) << "in MM_master.cpp, after add_request to scheduler_";
+        AUTO_COUNTER(request_handling_latency_seconds_completion);
+
+        // remove the pending request after scheduling
+        SCOPE_GUARD([this] { scheduler_->decr_pending_requests(); });
+
+        Timer timer;
+        // verify the prompt
+        if (!sp.verify_params(callback)) {
+          return;
+        }
+        DiTRequestState dit_state =
+            DiTRequestState(sp.input_params, sp.generation_params);
+        auto request = std::make_shared<Request>(sp.request_id,
+                                                 sp.x_request_id,
+                                                 sp.x_request_time,
+                                                 std::move(dit_state),
+                                                 sp.service_request_id,
+                                                 sp.offline,
+                                                 sp.slo_ms,
+                                                 sp.priority);
+        if (!request) {
+          return;
+        }
+
+        if (!scheduler_->add_request(request)) {
+          CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
+                              "No available resources to schedule request");
+        }
       });
 }
 

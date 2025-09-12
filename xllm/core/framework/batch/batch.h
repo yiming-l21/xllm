@@ -21,6 +21,7 @@ limitations under the License.
 #include <limits>
 #include <vector>
 
+#include "framework/request/dit_request_params.h"
 #include "framework/request/mm_data.h"
 #include "framework/request/sequence.h"
 #include "runtime/forward_params.h"
@@ -108,6 +109,9 @@ class Batch {
 
   // all sequences in this batch are in prefill stage
   bool all_seqs_in_prefill_ = true;
+
+  // dit_request_data in the batch
+  std::vector<DiTRequestParams> dit_request_data_vec_;
 };
 
 }  // namespace xllm
