@@ -37,7 +37,7 @@ Request::Request(const std::string& request_id,
                  bool offline,
                  int32_t slo_ms,
                  RequestPriority priority)
-    : RequestBase(request_id, x_request_id, x_request_time, service_request_id)
+    : RequestBase(request_id, x_request_id, x_request_time, service_request_id),
       state_(std::move(state)),
       offline_(offline),
       priority_(priority),

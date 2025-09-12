@@ -33,15 +33,15 @@ namespace xllm {
 
 class RequestBase {
  public:
-  RequestBase::RequestBase(onst std::string& request_id,
-                         const std::string& x_request_id,
-                         const std::string& x_request_time,
-                         const std::string& service_request_id = "")
-    : request_id_(request_id),
-      x_request_id_(x_request_id),
-      x_request_time_(x_request_time),
-      service_request_id_(service_request_id),
-      created_time_(absl::Now()) {}
+  RequestBase(const std::string& request_id,
+              const std::string& x_request_id,
+              const std::string& x_request_time,
+              const std::string& service_request_id = "")
+      : request_id_(request_id),
+        x_request_id_(x_request_id),
+        x_request_time_(x_request_time),
+        service_request_id_(service_request_id),
+        created_time_(absl::Now()) {}
 
   absl::Time created_time() const { return created_time_; }
 
@@ -53,7 +53,7 @@ class RequestBase {
 
   const std::string& x_request_time() const { return x_request_time_; }
 
-protected:
+ protected:
   // request create time
   absl::Time created_time_;
 

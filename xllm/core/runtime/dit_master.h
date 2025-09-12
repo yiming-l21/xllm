@@ -26,10 +26,10 @@ limitations under the License.
 #include "common/options.h"
 #include "common/rate_limiter.h"
 #include "framework/chat_template/jinja_chat_template.h"
+#include "framework/request/dit_request.h"
 #include "framework/request/request_output.h"
 #include "framework/request/request_params.h"
 #include "runtime/master.h"
-// #include "runtime/mm_engine.h"
 #include "scheduler/continuous_scheduler.h"
 
 namespace xllm {
@@ -75,9 +75,9 @@ class DITMaster : public Master {
                       const int32_t dp_size);
 
  private:
-  std::shared_ptr<Request> generate_request(ImageRequestParams sp,
-                                            std::optional<Call*> call,
-                                            ImageOutputCallback callback);
+  std::shared_ptr<DITRequest> generate_request(ImageRequestParams sp,
+                                               std::optional<Call*> call,
+                                               ImageOutputCallback callback);
 
  private:
   std::unique_ptr<Scheduler> scheduler_;

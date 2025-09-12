@@ -125,10 +125,11 @@ void DITMaster::handle_request(ImageRequestParams sp,
           return;
         }
 
-        if (!scheduler_->add_request(request)) {
-          CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
-                              "No available resources to schedule request");
-        }
+        // TODO
+        // if (!scheduler_->add_request(request)) {
+        //  CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
+        //                      "No available resources to schedule request");
+        //}
       });
 }
 
@@ -163,21 +164,18 @@ void DITMaster::generate() {
   running_.store(false, std::memory_order_relaxed);
 }
 
-std::shared_ptr<Request> DITMaster::generate_request(
+std::shared_ptr<DITRequest> DITMaster::generate_request(
     ImageRequestParams sp,
     std::optional<Call*> call,
     ImageOutputCallback callback) {
   DITRequestState req_state(std::move(sp.input_params),
                             std::move(sp.generation_params));
 
-  auto request = std::make_shared<Request>(sp.request_id,
-                                           sp.x_request_id,
-                                           sp.x_request_time,
-                                           std::move(req_state),
-                                           sp.service_request_id,
-                                           sp.offline,
-                                           sp.slo_ms,
-                                           sp.priority);
+  auto request = std::make_shared<DITRequest>(sp.request_id,
+                                              sp.x_request_id,
+                                              sp.x_request_time,
+                                              std::move(req_state),
+                                              sp.service_request_id);
 
   // add one sequence, rest will be added by scheduler
   return request;

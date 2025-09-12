@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "dit_request_params.h"
+#include "request_base.h"
 
 namespace xllm {
 
@@ -35,6 +36,7 @@ struct DITRequestState {
       : input_params_(std::move(input_params)),
         generation_params_(std::move(generation_params)) {}
   DITRequestState() {}
+
   InputParams& input_params() { return input_params_; }
   GenerationParams& generation_params() { return generation_params_; }
 
@@ -45,14 +47,15 @@ struct DITRequestState {
 
 class DITRequest : public RequestBase {
  public:
-  Request(const std::string& request_id,
-          const std::string& x_request_id,
-          const std::string& x_request_time,
-          const DiTRequestState& state,
-          const std::string& service_request_id = "");
+  DITRequest(const std::string& request_id,
+             const std::string& x_request_id,
+             const std::string& x_request_time,
+             const DITRequestState& state,
+             const std::string& service_request_id = "");
 
   DITRequestState& state() { return state_; }
-private:
+
+ private:
   DITRequestState state_;
 };
 

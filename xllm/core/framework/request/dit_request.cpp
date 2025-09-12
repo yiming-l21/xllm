@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "request.h"
+#include "dit_request.h"
 
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
@@ -29,12 +29,11 @@ limitations under the License.
 namespace xllm {
 
 DITRequest::DITRequest(const std::string& request_id,
-                 const std::string& x_request_id,
-                 const std::string& x_request_time,
-                 const DITRequestState& state,
-                 const std::string& service_request_id)
-    : RequestBase(request_id, x_request_id, x_request_time, service_request_id)
-      state_(std::move(state)) {
-}
+                       const std::string& x_request_id,
+                       const std::string& x_request_time,
+                       const DITRequestState& state,
+                       const std::string& service_request_id)
+    : RequestBase(request_id, x_request_id, x_request_time, service_request_id),
+      state_(std::move(state)) {}
 
 }  // namespace xllm
