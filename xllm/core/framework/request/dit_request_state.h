@@ -72,6 +72,28 @@ struct InputParams {
   //     negative_ip_adapter_image_embeds;
 
   std::optional<torch::Tensor> latents;
+
+  InputParams to(torch::Device device, torch::ScalarType dtype) const {
+    InputParams copy = *this;
+    if (copy.prompt_embeds) {
+      copy.prompt_embeds = copy.prompt_embeds->to(device, dtype);
+    }
+    if (copy.pooled_prompt_embeds) {
+      copy.pooled_prompt_embeds = copy.pooled_prompt_embeds->to(device, dtype);
+    }
+    if (copy.negative_prompt_embeds) {
+      copy.negative_prompt_embeds =
+          copy.negative_prompt_embeds->to(device, dtype);
+    }
+    if (copy.negative_pooled_prompt_embeds) {
+      copy.negative_pooled_prompt_embeds =
+          copy.negative_pooled_prompt_embeds->to(device, dtype);
+    }
+    if (copy.latents) {
+      copy.latents = copy.latents->to(device, dtype);
+    }
+    return copy;
+  }
 };
 
 struct DiTRequestState {

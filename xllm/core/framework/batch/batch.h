@@ -42,6 +42,9 @@ class Batch {
 
   void add(const std::vector<Sequence*>& sequences);
 
+  void add(const DiTRequestParams& dit_request_state) {
+    dit_request_data_vec_.emplace_back(dit_request_state);
+  }
   void set_copy_in_cache_block_infos(
       std::vector<CacheBlockInfo>* copy_in_cache_block_infos) {
     copy_in_cache_block_infos_ = copy_in_cache_block_infos;
@@ -85,6 +88,9 @@ class Batch {
   }
 
   bool get_batch_prefill_status() const { return all_seqs_in_prefill_; }
+  const std::vector<DiTRequestParams>& get_dit_request_state() const {
+    return dit_request_data_vec_;
+  }
 
  private:
   bool update_sequence_state(Sequence* seq, bool enable_schedule_overlap);
