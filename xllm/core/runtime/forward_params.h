@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "common/types.h"
 #include "framework/model/model_input_params.h"
+#include "framework/request/dit_request_state.h"
 #include "framework/sampling/sampling_params.h"
 #include "tensor.pb.h"
 namespace xllm {
@@ -106,6 +107,10 @@ struct ForwardInput {
   // kv info for disaggregated prefill/decode
   std::vector<TransferKVInfo> transfer_kv_infos;
   EplbInfo eplb_info;
+
+  // dit related input
+  InputParams dit_input_params;
+  GenerationParams dit_generation_params;
 };
 
 // output after forward execution
@@ -122,9 +127,10 @@ struct ForwardOutput {
 
   torch::Tensor expert_load_data;
 
+  int32_t prepared_layer_id;
+
   // dit related output
   torch::Tensor image;
-  int32_t prepared_layer_id;
 };
 
 // Model input with raw data, which will be

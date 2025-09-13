@@ -48,7 +48,8 @@ namespace xllm {
 DiTMaster::DiTMaster(const Options& options)
     : Master(options, EngineType::DIT) {
   // TODO: init master
-  CHECK(engine_->init());
+  CHECK(dit_engine_->init());
+  LOG(INFO) << "DiT engine initialized in DiTMaster.";
   ContinuousScheduler::Options scheduler_options;
   scheduler_options.max_tokens_per_batch(options.max_tokens_per_batch())
       .max_seqs_per_batch(options.max_seqs_per_batch())
@@ -60,13 +61,18 @@ DiTMaster::DiTMaster(const Options& options)
       .instance_role(options_.instance_role())
       .kv_cache_transfer_mode(options_.kv_cache_transfer_mode())
       .enable_service_routing(options_.enable_service_routing());
-  scheduler_ = create_continuous_scheduler(engine_.get(), scheduler_options);
+  scheduler_ =
+      create_continuous_scheduler(dit_engine_.get(), scheduler_options);
+  LOG(INFO) << "ContinuousScheduler created in DiTMaster.";
   InstanceInfo instance_info;
   if (options_.enable_service_routing()) {
     auto& instance_info = scheduler_->get_instance_info();
     XServiceClient::get_instance()->register_instance(instance_info);
   }
+  LOG(INFO) << "Instance registered with service routing.";
   threadpool_ = std::make_unique<ThreadPool>(options.num_handling_threads());
+  LOG(INFO) << "ThreadPool with " << options.num_handling_threads()
+            << " threads created in DiTMaster.";
 }
 
 DiTMaster::~DiTMaster() {
@@ -101,6 +107,7 @@ void DiTMaster::handle_batch_request(std::vector<DiTRequestParams> sps,
 void DiTMaster::handle_request(DiTRequestParams sp,
                                std::optional<Call*> call,
                                DiTOutputCallback callback) {
+  LOG(INFO) << "in MM_master.cpp, into handle_request";
   auto cb = [callback = std::move(callback)](const DiTRequestOutput& output) {
     output.log_request_status();
     return callback(output);
@@ -132,7 +139,8 @@ void DiTMaster::handle_request(DiTRequestParams sp,
         if (!request) {
           return;
         }
-
+        LOG(INFO) << "Request " << request->request_id()
+                  << " created and pushing to scheduler.";
         if (!scheduler_->add_request(request)) {
           CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
                               "No available resources to schedule request");
@@ -175,7 +183,7 @@ void DiTMaster::get_cache_info(std::vector<uint64_t>& cluster_ids,
                                std::vector<std::string>& addrs,
                                std::vector<int64_t>& k_cache_ids,
                                std::vector<int64_t>& v_cache_ids) {
-  engine_->get_cache_info(cluster_ids, addrs, k_cache_ids, v_cache_ids);
+  dit_engine_->get_cache_info(cluster_ids, addrs, k_cache_ids, v_cache_ids);
 }
 
 bool DiTMaster::link_cluster(const std::vector<uint64_t>& cluster_ids,
@@ -183,7 +191,8 @@ bool DiTMaster::link_cluster(const std::vector<uint64_t>& cluster_ids,
                              const std::vector<std::string>& device_ips,
                              const std::vector<uint16_t>& ports,
                              const int32_t dp_size) {
-  return engine_->link_cluster(cluster_ids, addrs, device_ips, ports, dp_size);
+  return dit_engine_->link_cluster(
+      cluster_ids, addrs, device_ips, ports, dp_size);
 }
 
 bool DiTMaster::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
@@ -191,7 +200,7 @@ bool DiTMaster::unlink_cluster(const std::vector<uint64_t>& cluster_ids,
                                const std::vector<std::string>& device_ips,
                                const std::vector<uint16_t>& ports,
                                const int32_t dp_size) {
-  return engine_->unlink_cluster(
+  return dit_engine_->unlink_cluster(
       cluster_ids, addrs, device_ips, ports, dp_size);
 }
 

@@ -40,13 +40,12 @@ DiTEngine::DiTEngine(const runtime::Options& options) : options_(options) {
   const int32_t world_size = static_cast<int32_t>(devices.size());
 
   // create workers
-  WorkerType worker_type = WorkerType::DIT;
   for (size_t i = 0; i < devices.size(); ++i) {
     const int32_t rank = static_cast<int32_t>(i);
     ProcessGroup* pg = world_size > 1 ? process_groups_[i].get() : nullptr;
     ParallelArgs parallel_args(rank, world_size, pg);
-    workers_.emplace_back(std::make_unique<Worker>(
-        parallel_args, devices[i], options_, worker_type));
+    workers_.emplace_back(
+        std::make_unique<DiTWorker>(parallel_args, devices[i], options_));
   }
 
   if (workers_.size() > 1) {
@@ -76,17 +75,21 @@ bool DiTEngine::init_model() {
   // init model for each worker in parallel
   // multiple workers, call async init
   std::vector<folly::SemiFuture<bool>> futures;
+  LOG(INFO) << "Starting to init model on " << workers_.size() << " workers.";
   futures.reserve(workers_.size());
   for (auto& worker : workers_) {
-    futures.push_back(worker->init_model_async(model_path));
+    futures.push_back(worker->init_model(model_path));
   }
   // wait for all futures to complete
   auto results = folly::collectAll(futures).get();
+  LOG(INFO) << "All workers completed model initialization.";
   for (const auto& result : results) {
     if (!result.value()) {
       return false;
     }
   }
+  LOG(INFO) << "All workers successfully initialized the model.";
+  return true;
 }
 
 ForwardOutput DiTEngine::step(std::vector<Batch>& batches) {
@@ -101,7 +104,7 @@ ForwardOutput DiTEngine::step(std::vector<Batch>& batches) {
   std::vector<folly::SemiFuture<std::optional<ForwardOutput>>> futures;
   futures.reserve(workers_.size());
   for (auto& worker : workers_) {
-    futures.emplace_back(worker->step_async(forward_inputs));
+    futures.emplace_back(worker->step(forward_inputs));
   }
   // wait for the all future to complete
   auto results = folly::collectAll(futures).get();
@@ -117,7 +120,7 @@ std::vector<int64_t> DiTEngine::get_active_activation_memory() const {
   std::vector<folly::SemiFuture<int64_t>> futures;
   futures.reserve(workers_.size());
   for (auto& worker : workers_) {
-    futures.push_back(worker->get_active_activation_memory_async());
+    futures.push_back(worker->get_active_activation_memory());
   }
 
   // wait for all futures to complete

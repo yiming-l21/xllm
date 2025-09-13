@@ -12,10 +12,12 @@ cc_library(
     executor.h
     executor_impl.h
     npu_executor_impl.h
+    dit_executor.h
     worker.h
     worker_impl.h
     llm_worker_impl.h
     vlm_worker_impl.h
+    dit_worker.h
     embed_worker_impl.h
     embed_vlm_worker_impl.h
     engine.h
@@ -29,10 +31,12 @@ cc_library(
   SRCS
     executor.cpp
     npu_executor_impl.cpp
+    dit_executor.cpp
     worker.cpp
     worker_impl.cpp
     llm_worker_impl.cpp
     vlm_worker_impl.cpp
+    dit_worker.cpp
     embed_worker_impl.cpp
     embed_vlm_worker_impl.cpp
     llm_engine.cpp

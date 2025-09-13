@@ -26,6 +26,7 @@ limitations under the License.
 #include "common/rate_limiter.h"
 #include "common/types.h"
 #include "framework/request/request_params.h"
+#include "runtime/dit_engine.h"
 #include "runtime/engine.h"
 
 namespace xllm {
@@ -63,6 +64,7 @@ class Master {
  protected:
   Options options_;
   std::unique_ptr<Engine> engine_;
+  std::unique_ptr<DiTEngine> dit_engine_;
 
   RateLimiter rate_limiter_;
 };

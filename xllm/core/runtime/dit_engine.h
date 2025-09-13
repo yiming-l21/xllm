@@ -21,29 +21,52 @@ limitations under the License.
 #include <memory>
 
 #include "common/macros.h"
+#include "dit_worker.h"
 #include "framework/batch/batch.h"
 #include "framework/quant_args.h"
 #include "runtime/engine.h"
-#include "worker.h"
 
 namespace xllm {
 
-class DiTEngine : public Engine {
+class DiTEngine {
  public:
   DiTEngine(const runtime::Options& options);
 
   ~DiTEngine() = default;
 
-  ForwardOutput step(std::vector<Batch>& batch) override;
+  ForwardOutput step(std::vector<Batch>& batch);
 
   const runtime::Options& options() const { return options_; }
 
-  bool init() override;
+  bool init();
 
-  void update_last_step_result(std::vector<Batch>& batch) override;
+  void update_last_step_result(std::vector<Batch>& batch);
 
   // return the active activation memory
-  std::vector<int64_t> get_active_activation_memory() const override;
+  std::vector<int64_t> get_active_activation_memory() const;
+
+  void get_cache_info(std::vector<uint64_t>& cluster_ids,
+                      std::vector<std::string>& addrs,
+                      std::vector<int64_t>& k_cache_ids,
+                      std::vector<int64_t>& v_cache_ids) {
+    LOG(FATAL) << " get_cache_info is notimplemented!";
+  };
+
+  bool link_cluster(const std::vector<uint64_t>& cluster_ids,
+                    const std::vector<std::string>& addrs,
+                    const std::vector<std::string>& device_ips,
+                    const std::vector<uint16_t>& ports,
+                    const int32_t src_dp_size) {
+    LOG(FATAL) << " link_cluster is notimplemented!";
+  };
+
+  bool unlink_cluster(const std::vector<uint64_t>& cluster_ids,
+                      const std::vector<std::string>& addrs,
+                      const std::vector<std::string>& device_ips,
+                      const std::vector<uint16_t>& ports,
+                      const int32_t dp_size) {
+    LOG(FATAL) << " unlink_cluster is notimplemented!";
+  };
 
  private:
   bool init_model();
@@ -57,7 +80,7 @@ class DiTEngine : public Engine {
   std::vector<std::unique_ptr<ProcessGroup>> process_groups_;
 
   // a list of workers, with each worker handling a partial of model
-  std::vector<std::unique_ptr<Worker>> workers_;
+  std::vector<std::unique_ptr<DiTWorker>> workers_;
 };
 
 }  // namespace xllm

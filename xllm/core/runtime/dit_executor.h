@@ -21,36 +21,34 @@ limitations under the License.
 #include <memory>
 
 #include "common/macros.h"
+#include "core/framework/dit_model_loader.h"
+#include "forward_params.h"
 #include "framework/batch/batch.h"
-#include "framework/kv_cache/kv_cache.h"
-#include "framework/model/causal_lm.h"
+#include "framework/model/dit_model.h"
 #include "framework/model/model_input_params.h"
-#include "runtime/executor_impl.h"
+#include "framework/request/dit_request_state.h"
 #include "runtime/options.h"
 
 namespace xllm {
 
-class Executor final {
+class DiTExecutor {
  public:
-  Executor(CausalLM* model,
-           const ModelArgs& args,
-           const torch::Device& device,
-           const runtime::Options& options);
+  DiTExecutor(DiTModel* model,
+              DiTModelLoader&& model_loader,
+              const runtime::Options& options);
 
-  virtual ~Executor() = default;
+  ~DiTExecutor() = default;
 
   ForwardInput prepare_inputs(Batch& batch);
 
-  // tokens: [num_tokens]
-  // positions: [num_tokens] token pos in the sequence
-  // returns: [num_tokens, hidden_size]
-  torch::Tensor forward(const torch::Tensor& tokens,
-                        const torch::Tensor& positions,
-                        std::vector<KVCache>& kv_caches,
-                        const ModelInputParams& params);
+  torch::Tensor forward(const InputParams& input_params,
+                        const GenerationParams& generation_params);
 
  private:
-  std::unique_ptr<ExecutorImpl> impl_;
+  // not own
+  DiTModel* model_;
+  DiTModelLoader model_loader_;
+  runtime::Options options_;
 };
 
 }  // namespace xllm

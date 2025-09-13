@@ -151,7 +151,7 @@ Master::Master(const Options& options, EngineType type) : options_(options) {
         .store_protocol(options_.store_protocol())
         .store_master_server_entry(options_.store_master_server_entry())
         .store_metadata_connstring(options_.store_metadata_connstring());
-    engine_ = std::make_unique<DiTEngine>(dit_options);
+    dit_engine_ = std::make_unique<DiTEngine>(dit_options);
   } else if (type == EngineType::SSM) {
     // create a speculative engine if draft model path is provided
     const auto draft_model_path = options_.draft_model_path().value_or("");
@@ -249,8 +249,8 @@ std::unique_ptr<Master> create_master(const std::string& backend,
   } else if (backend == "vlm") {
     return std::make_unique<VLMMaster>(options);
   } else if (backend == "dit") {
-    LOG(INFO) << "creating dit master";
     return std::make_unique<DiTMaster>(options);
+    LOG(INFO) << "Creating DiT Master";
   } else {
     LOG(FATAL) << "Failed to create master, backend is" << backend;
     return nullptr;
