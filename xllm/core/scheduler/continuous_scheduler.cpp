@@ -84,18 +84,35 @@ ContinuousScheduler::ContinuousScheduler(Engine* engine, const Options& options)
   instance_info_.dp_size = options.dp_size();
 }
 
+ContinuousScheduler::ContinuousScheduler(DiTEngine* engine,
+                                         const Options& options)
+    : options_(options),
+      dit_engine_(engine),
+      request_queue_(kRequestQueueSize),
+      waiting_priority_queue_(create_comparator(options.priority_strategy())),
+      waiting_priority_queue_offline_(
+          create_comparator(options.priority_strategy())) {
+  CHECK(dit_engine_ != nullptr);
+  last_batch_.resize(options_.dp_size());
+
+  create_running_queue(options);
+  if (options_.enable_service_routing()) {
+    XServiceClient::get_instance()->set_scheduler(this);
+  }
+
+  instance_info_.name = options_.instance_name().value_or("");
+  instance_info_.type = options_.instance_role().value().to_string();
+  instance_info_.dp_size = options.dp_size();
+}
+
 ContinuousScheduler::~ContinuousScheduler() { running_requests_.clear(); }
 
 bool ContinuousScheduler::add_request(std::shared_ptr<Request>& request) {
+  LOG(INFO) << "In ContinuousScheduler::add_request";
   CHECK(request != nullptr);
-  CHECK(!request->sequences().empty());
-
-  prepare_cache_async(request);
-
   if (request_queue_.write(request)) {
     return true;
   }
-
   return false;
 }
 
@@ -608,210 +625,20 @@ std::vector<Batch> ContinuousScheduler::prepare_batch() {
   // propogate new requests to waiting_priority_queue_
   // Include those requests that are preempted by others.
   std::shared_ptr<Request> request;
+  std::vector<Batch> batches;
   // read from request queue then push to waiting priority queue
   while (request_queue_.read(request)) {
     CHECK(request);
-
-    // expand sequences to the target number if prefix cache is disabled.
-    if (!enable_prefix_cache_) {
-      // expand sequences to the target number
-      request->expand_sequences(false);
-    }
-
-    if (request->sequences()[0]->kv_state().kv_cache_tokens_num() == 0) {
-      if (request->offline()) {
-        waiting_priority_queue_offline_.push(request);
-      } else {
-        waiting_priority_queue_.push(request);
-      }
-    } else {
-      // request from prefill instance in disagge pd mode.
-      running_requests_.emplace_back(request);
-    }
+    auto batche = Batch();
+    DiTRequestParams params;
+    params.input_params = request->dit_state().input_params();
+    params.generation_params = request->dit_state().generation_params();
+    batche.add(params);
+    batches.push_back(std::move(batche));
+    // request from prefill instance in disagge pd mode.
+    running_requests_.emplace_back(request);
   }
 
-  // handle finished/cancelled requests
-  std::vector<std::shared_ptr<Request>> finished_requests;
-  for (auto it = running_requests_.rbegin(); it != running_requests_.rend();
-       ++it) {
-    if (*it == nullptr) {
-      continue;
-    }
-    std::shared_ptr<Request> request = *it;
-    request->update_connection_status();
-    if (request->finished() || request->cancelled()) {
-      block_manager_pool_->deallocate(request.get());
-      // release the ownership of the request
-      finished_requests.emplace_back(request);
-      // finished request is set to nullptr
-      *it = nullptr;
-    }
-  }
-
-  if (options_.priority_strategy() == "FCFS") {
-    if (last_step_prefill_) {
-      // insert all requests to the back of running_queue_
-      // 1. last step is prefill step:
-      // new prefill has high priority, but these requests has lower priority
-      // then existed requests in running_queue_ in decoding stage.
-      // so we need to push them to the back of running_queue_.
-      for (auto it = running_requests_.begin(); it != running_requests_.end();
-           ++it) {
-        // finished request is set to nullptr
-        if (*it == nullptr) {
-          continue;
-        }
-        handle_running_requests(*it);
-        if ((*it)->offline()) {
-          running_queue_offline_->push(*it, last_step_prefill_);
-        } else {
-          running_queue_->push(*it, last_step_prefill_);
-        }
-      }
-    } else {
-      // insert all requests to the front of running_queue_
-      // 2. last step is decode step:
-      // We need to traverse running_requests_ array in reverse order.
-      // Because there may be some unexecuted requests with
-      // lower priorities remaining in the running_queue_.
-      // For the requests in running_requests_,
-      // their priorities are all higher than those of the
-      // remaining requests. Therefore, the `push_front`
-      // method needs to be used.
-      //
-      for (auto it = running_requests_.rbegin(); it != running_requests_.rend();
-           ++it) {
-        // finished request is set to nullptr
-        if (*it == nullptr) {
-          continue;
-        }
-        handle_running_requests(*it);
-        if ((*it)->offline()) {
-          running_queue_offline_->push(*it, last_step_prefill_);
-        } else {
-          running_queue_->push(*it, last_step_prefill_);
-        }
-      }
-    }
-  } else {
-    // directly push running requests to the priority queue
-    for (auto it = running_requests_.begin(); it != running_requests_.end();
-         ++it) {
-      if (*it == nullptr) {
-        continue;
-      }
-      handle_running_requests(*it);
-      if ((*it)->offline()) {
-        running_queue_offline_->push(*it);
-      } else {
-        running_queue_->push(*it);
-      }
-    }
-  }
-
-  // clear previous batch
-  last_step_prefill_ = false;
-  running_requests_.clear();
-  running_sequences_.clear();
-  running_sequences_budgets_.clear();
-
-  // maintain estimate_latency for current batch for support requests with
-  // different ttft. TO IMPROVE: use min remaining time (i.e. slo -
-  // elapsed_time) of the reuquest in current decode queue to replace current
-  // latency_budget.
-  size_t latency_budget = options_.max_global_ttft_ms();
-  size_t estimate_latency = 0;
-  // remaining budget for the current batch
-  size_t remaining_token_budget = options_.max_tokens_per_batch();
-  size_t remaining_seq_budget = std::max(options_.max_seqs_per_batch(), 1);
-  size_t num_preempted_requests = 0;
-  size_t num_offline_decode_preempt_offline_requests = 0;
-  size_t num_online_decode_preempt_online_requests = 0;
-  size_t num_online_prefill_preempt_offline_requests = 0;
-  size_t num_online_decode_preempt_offline_requests = 0;
-  // TO IMPROVE?: handle online decode request before prefill offline request
-  handle_prefill_requests(latency_budget,
-                          estimate_latency,
-                          remaining_token_budget,
-                          remaining_seq_budget,
-                          waiting_priority_queue_,
-                          num_online_prefill_preempt_offline_requests,
-                          finished_requests);
-  handle_prefill_requests(latency_budget,
-                          estimate_latency,
-                          remaining_token_budget,
-                          remaining_seq_budget,
-                          waiting_priority_queue_offline_,
-                          num_online_prefill_preempt_offline_requests,
-                          finished_requests);
-
-  if (running_sequences_.empty()) {
-    latency_budget = options_.max_global_tpot_ms();
-    // Handle decoding requests.
-    // no prefill request, schedule the decode requests in the running priority
-    // queue
-    handle_decode_requests(latency_budget,
-                           estimate_latency,
-                           remaining_token_budget,
-                           remaining_seq_budget,
-                           num_offline_decode_preempt_offline_requests,
-                           num_online_decode_preempt_online_requests,
-                           num_online_decode_preempt_offline_requests,
-                           running_queue_);
-    handle_decode_requests(latency_budget,
-                           estimate_latency,
-                           remaining_token_budget,
-                           remaining_seq_budget,
-                           num_offline_decode_preempt_offline_requests,
-                           num_online_decode_preempt_online_requests,
-                           num_online_decode_preempt_offline_requests,
-                           running_queue_offline_);
-  }
-
-  num_preempted_requests = num_offline_decode_preempt_offline_requests +
-                           num_online_decode_preempt_online_requests +
-                           num_online_decode_preempt_offline_requests +
-                           num_online_prefill_preempt_offline_requests;
-  if (!finished_requests.empty()) {
-    response_processor_->process_completed_requests(finished_requests);
-  }
-
-  auto batches = BatchFactory::get_instance(options_.dp_size())
-                     ->create_batches(
-                         running_sequences_,
-                         running_sequences_budgets_,
-                         block_manager_pool_->get_copy_in_cache_block_infos(),
-                         block_manager_pool_->get_copy_out_cache_block_infos());
-
-  if (!batches[0].empty()) {
-    // only update the scheduling latency when there are requests to process
-    COUNTER_ADD(scheduling_latency_seconds, timer.elapsed_seconds());
-  }
-
-  GAUGE_SET(num_pending_requests,
-            pending_requests_.load(std::memory_order_relaxed));
-  GAUGE_SET(num_running_requests, running_requests_.size());
-  GAUGE_SET(num_waiting_requests,
-            waiting_priority_queue_.size() + running_queue_->size());
-
-  GAUGE_ADD(num_preempted_requests, num_preempted_requests);
-  GAUGE_ADD(num_offline_decode_preempt_offline_requests,
-            num_offline_decode_preempt_offline_requests);
-  GAUGE_ADD(num_online_decode_preempt_online_requests,
-            num_online_decode_preempt_online_requests);
-  GAUGE_ADD(num_online_prefill_preempt_offline_requests,
-            num_online_prefill_preempt_offline_requests);
-  GAUGE_ADD(num_online_decode_preempt_offline_requests,
-            num_online_decode_preempt_offline_requests);
-
-  GAUGE_SET(num_running_sequences, running_sequences_.size());
-
-  GAUGE_SET(kv_cache_utilization_perc,
-            block_manager_pool_->kv_cache_utilization());
-  GAUGE_SET(num_blocks_in_prefix_cache,
-            util::min(block_manager_pool_->num_blocks_in_prefix_cache()));
-  GAUGE_SET(num_free_blocks, util::max(block_manager_pool_->num_free_blocks()));
-  GAUGE_SET(num_used_blocks, util::min(block_manager_pool_->num_used_blocks()));
   return batches;
 }
 
@@ -821,29 +648,9 @@ std::vector<Batch> ContinuousScheduler::schedule_request(
   std::vector<Batch> batch;
   while (true) {
     batch = prepare_batch();
-    bool all_empty =
-        std::all_of(batch.begin(), batch.end(), [](const Batch& one_batch) {
-          return one_batch.empty();
-        });
-    if (!all_empty) {
-      return batch;
-    }
-
-    if (!waiting_priority_queue_.empty() || !running_queue_->empty() ||
-        !waiting_priority_queue_offline_.empty() ||
-        !running_queue_offline_->empty()) {
-      continue;
-    }
-
-    const auto now = absl::Now();
-    if (now > deadline) {
+    if (batch.size() > 0) {
       break;
     }
-    // wait for new requests to arrive
-    constexpr uint64_t kStepSleepTimeMs = 10;
-    const auto time_to_sleep =
-        std::min(absl::Milliseconds(kStepSleepTimeMs), deadline - now);
-    absl::SleepFor(time_to_sleep);
   }
   // return an empty batch
   return batch;
@@ -879,23 +686,18 @@ void ContinuousScheduler::prepare_cache_async(
 // step the scheduler forward by one step
 // may get blocked if there are no requests to process
 void ContinuousScheduler::step(const absl::Duration& timeout) {
-  if (!options_.enable_schedule_overlap()) {
-    // get a new batch of requests
-    std::vector<Batch> batch = schedule_request(timeout);
-    bool all_empty =
-        std::all_of(batch.begin(), batch.end(), [](const Batch& one_batch) {
-          return one_batch.empty();
-        });
-    if (all_empty) {
-      return;
-    }
+  // get a new batch of requests
+  std::vector<Batch> batch = schedule_request(timeout);
+  LOG(INFO) << "scheduler get unempty batch";
+  if (FLAGS_backend != "dit") {
     engine_->step(batch);
-    block_manager_pool_->reset_copy_content();
-    // process request output in batch
-    process_batch_output(false);
   } else {
-    step_with_schedule_overlap(timeout);
+    LOG(INFO) << "scheduler Using DIT backend";
+    dit_engine_->step(batch);
   }
+  block_manager_pool_->reset_copy_content();
+  // process request output in batch
+  process_batch_output(false);
 }
 
 void ContinuousScheduler::step_with_schedule_overlap(
@@ -915,13 +717,21 @@ void ContinuousScheduler::step_with_schedule_overlap(
   }
 
   if (!cur_batch_all_empty) {
-    engine_->step(batch);
+    if (FLAGS_backend != "dit") {
+      engine_->step(batch);
+    } else {
+      dit_engine_->step(batch);
+    }
     block_manager_pool_->reset_copy_content();
   }
 
   // producer-consumer mode, make sure only one step is scheduled in advance
   if (!is_first_step_ && !last_batch_all_empty) {
-    engine_->update_last_step_result(last_batch_);
+    if (FLAGS_backend != "dit") {
+      engine_->update_last_step_result(last_batch_);
+    } else {
+      dit_engine_->update_last_step_result(last_batch_);
+    }
     process_batch_output(true);
   }
   last_batch_ = std::move(batch);
@@ -944,7 +754,11 @@ void ContinuousScheduler::generate() {
     }
 
     // run inference for the batch
-    engine_->step(batch);
+    if (FLAGS_backend != "dit") {
+      engine_->step(batch);
+    } else {
+      dit_engine_->step(batch);
+    }
     block_manager_pool_->reset_copy_content();
 
     // process request output in batch
@@ -1068,8 +882,14 @@ std::vector<int64_t> ContinuousScheduler::get_num_occupied_slots(
 }
 
 std::vector<int64_t> ContinuousScheduler::get_active_activation_in_bytes() {
-  std::vector<int64_t> all_active_activation_in_bytes =
-      engine_->get_active_activation_memory();
+  std::vector<int64_t> all_active_activation_in_bytes;
+  if (FLAGS_backend == "dit") {
+    all_active_activation_in_bytes =
+        dit_engine_->get_active_activation_memory();
+  } else {
+    all_active_activation_in_bytes = engine_->get_active_activation_memory();
+  }
+
   std::vector<int64_t> active_activation_in_bytes(options_.dp_size());
 
   const int32_t dp_local_tp_size =

@@ -21,7 +21,6 @@ limitations under the License.
 #include "scheduler/zero_eviction_scheduler.h"
 
 namespace xllm {
-
 std::unique_ptr<ContinuousScheduler> create_continuous_scheduler(
     Engine* engine,
     ContinuousScheduler::Options options) {
@@ -40,4 +39,9 @@ std::unique_ptr<ContinuousScheduler> create_continuous_scheduler(
   return std::make_unique<ContinuousScheduler>(engine, options);
 }
 
+std ::unique_ptr<ContinuousScheduler> create_continuous_scheduler(
+    DiTEngine* dit_engine,
+    ContinuousScheduler::Options options) {
+  return std::make_unique<ContinuousScheduler>(dit_engine, options);
+}
 }  // namespace xllm

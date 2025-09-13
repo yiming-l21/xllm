@@ -32,13 +32,14 @@ limitations under the License.
 #include "framework/request/priority_comparator.h"
 #include "framework/request/request.h"
 #include "framework/request/sequence.h"
+#include "runtime/dit_engine.h"
 #include "runtime/xservice_client.h"
 #include "scheduler.h"
 #include "scheduler/decode_priority_queue.h"
 #include "scheduler/profile/profile_manager.h"
-
 namespace xllm {
 class Engine;
+class DiTEngine;
 class DecodePriorityQueue;
 class ContinuousScheduler : public Scheduler {
  public:
@@ -110,6 +111,7 @@ class ContinuousScheduler : public Scheduler {
   };
 
   ContinuousScheduler(Engine* engine, const Options& options);
+  ContinuousScheduler(DiTEngine* engine, const Options& options);
   virtual ~ContinuousScheduler();
 
   bool add_request(std::shared_ptr<Request>& request) override;
@@ -122,11 +124,7 @@ class ContinuousScheduler : public Scheduler {
   void incr_pending_requests(size_t count) override {
     pending_requests_.fetch_add(count, std::memory_order_relaxed);
   }
-  void decr_pending_requests() override {
-    const auto old_value =
-        pending_requests_.fetch_sub(1, std::memory_order_relaxed);
-    CHECK_GT(old_value, 0) << "pending requests underflow";
-  }
+  void decr_pending_requests() override {}
 
   size_t num_pending_requests() {
     return pending_requests_.load(std::memory_order_relaxed);
@@ -173,6 +171,8 @@ class ContinuousScheduler : public Scheduler {
 
   // the engine to run the batch
   Engine* engine_;
+
+  DiTEngine* dit_engine_;
 
   // the block manager to manage the cache blocks
   BlockManagerPool* block_manager_pool_;
@@ -276,6 +276,8 @@ class ContinuousScheduler : public Scheduler {
 
   // build a batch of requests from the priority queue
   virtual std::vector<Batch> prepare_batch();
+
+  // std::vector<Batch> prepare_dit_batch();
 
  private:
   std::vector<Batch> schedule_request(const absl::Duration& timeout);

@@ -24,4 +24,7 @@ std::unique_ptr<ContinuousScheduler> create_continuous_scheduler(
     Engine* engine,
     ContinuousScheduler::Options options);
 
+std ::unique_ptr<ContinuousScheduler> create_continuous_scheduler(
+    DiTEngine* dit_engine,
+    ContinuousScheduler::Options options);
 }  // namespace xllm
