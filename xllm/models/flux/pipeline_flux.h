@@ -16,7 +16,8 @@
 #include <vector>
 
 #include "core/framework/context.h"
-#include "core/framework/model/model_input_params.h"
+#include "core/framework/dit_model_loader.h"
+#include "core/framework/request/dit_request_state.h"
 #include "core/framework/state_dict/state_dict.h"
 #include "core/layers/npu/pos_embedding.h"
 #include "core/layers/npu/rms_norm.h"
@@ -186,7 +187,7 @@ class FluxPipelineImpl : public torch::nn::Module {
   FlowMatchEulerDiscreteScheduler scheduler_{nullptr};
   VAE vae_{nullptr};
   VAEImageProcessor vae_image_processor_{nullptr};
-  DiTModel transformer_{nullptr};
+  DiTModelPipeline transformer_{nullptr};
   T5EncoderModel t5_{nullptr};
   CLIPTextModel clip_text_model_{nullptr};
   int vae_scale_factor_;
@@ -212,25 +213,40 @@ class FluxPipelineImpl : public torch::nn::Module {
     _execution_dtype = torch::kBFloat16;
     LOG(INFO) << _execution_device << " is the execution device";
     LOG(INFO) << _execution_dtype << " is the execution dtype";
+    LOG(INFO) << model_args_;
     vae_shift_factor_ = model_args_.vae_shift_factor();
     vae_scaling_factor_ = model_args_.vae_scale_factor();
     default_sample_size_ = 128;
     tokenizer_max_length_ = 77;  // TODO: get from config file
+    LOG(INFO) << "Initializing Flux pipeline...";
     vae_image_processor_ = VAEImageProcessor(
         true, vae_scale_factor_, 4, "lanczos", -1, true, false, false, false);
+    LOG(INFO) << "VAE image processor initialized.";
     vae_ = VAE(context, _execution_device, _execution_dtype);
-    transformer_ = DiTModel(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "VAE initialized.";
+    transformer_ =
+        DiTModelPipeline(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "DiT transformer initialized.";
     t5_ = T5EncoderModel(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "T5 initialized.";
     clip_text_model_ =
         CLIPTextModel(context, _execution_device, _execution_dtype);
+    LOG(INFO) << "CLIP text model initialized.";
     scheduler_ = FlowMatchEulerDiscreteScheduler(context);
+    LOG(INFO) << "Flux pipeline initialized.";
     // register modules
     register_module("vae", vae_);
+    LOG(INFO) << "VAE registered.";
     register_module("vae_image_processor", vae_image_processor_);
+    LOG(INFO) << "VAE image processor registered.";
     register_module("transformer", transformer_);
+    LOG(INFO) << "DiT transformer registered.";
     register_module("t5", t5_);
+    LOG(INFO) << "T5 registered.";
     register_module("scheduler", scheduler_);
+    LOG(INFO) << "Scheduler registered.";
     register_module("clip_text_model", clip_text_model_);
+    LOG(INFO) << "CLIP text model registered.";
   }
   void check_inputs(
       std::optional<torch::optional<std::vector<std::string>>> prompt,
@@ -364,8 +380,6 @@ class FluxPipelineImpl : public torch::nn::Module {
       std::optional<torch::Tensor> latents = std::nullopt) {
     int64_t adjusted_height = 2 * (height / (vae_scale_factor_ * 2));
     int64_t adjusted_width = 2 * (width / (vae_scale_factor_ * 2));
-    LOG(INFO) << height << " " << width << " " << adjusted_height << " "
-              << adjusted_width << " " << vae_scale_factor_;
     std::vector<int64_t> shape = {
         batch_size, num_channels_latents, adjusted_height, adjusted_width};
     if (latents.has_value()) {
@@ -385,38 +399,47 @@ class FluxPipelineImpl : public torch::nn::Module {
         batch_size, adjusted_height / 2, adjusted_width / 2, device, dtype);
     return {packed_latents, latent_image_ids};
   }
-  torch::Tensor forward(const torch::Tensor& tokens,
-                        const torch::Tensor& positions,
-                        std::vector<KVCache>& kv_caches,
-                        const ModelInputParams& input_params) {
-    LOG(INFO) << "FluxPipelineImpl forward called";
+  torch::Tensor forward(const InputParams& input_params,
+                        const GenerationParams& generation_params) {
+    LOG(INFO) << "FluxPipelineImpl forward called" << input_params.prompt;
     torch::Generator generator = torch::Generator();
-    torch::manual_seed(42);
+    torch::manual_seed(generation_params.seed.value_or(42));
     std::vector<torch::Generator> generators_vec;
     generators_vec.push_back(generator);
     std::optional<std::vector<torch::Generator>> generators_opt =
         generators_vec;
-    FluxPipelineOutput output =
-        forward_(std::vector<std::string>(),  // prompt
-                 std::nullopt,                // prompt_2
-                 std::nullopt,                // negative_prompt
-                 std::nullopt,                // negative_prompt_2
-                 1.0f,                        // cfg scale
-                 1440,
-                 1440,            // height, width
-                 25,              // num_inference_steps
-                 std::nullopt,    // sigmas
-                 3.5f,            // guidance_scale
-                 1,               // num_images_per_prompt
-                 generators_opt,  // generator
-                 std::nullopt,    // latents
-                 std::nullopt,    // prompt_embeds
-                 std::nullopt,    // negative_prompt_embeds
-                 std::nullopt,    // pooled_prompt_embeds
-                 std::nullopt,    // pooled_negative_prompt_embeds
-                 "pil",           // output_type
-                 512              // max_sequence_length
-        );
+    FluxPipelineOutput output = forward_(
+        std::make_optional(c10::optional<std::vector<std::string>>{
+            std::vector<std::string>{input_params.prompt}}),  // prompt
+        std::make_optional(
+            c10::optional<std::vector<std::string>>{std::vector<std::string>{
+                input_params.prompt_2.value_or("")}}),  // prompt_2
+        std::make_optional(c10::optional<std::vector<std::string>>{
+            std::vector<std::string>{input_params.negative_prompt.value_or(
+                "")}}),  // negative_prompt
+        std::make_optional(c10::optional<std::vector<std::string>>{
+            std::vector<std::string>{input_params.negative_prompt_2.value_or(
+                "")}}),                                // negative_prompt_2
+        generation_params.true_cfg_scale.value_or(1),  // cfg scale
+        std::make_optional(generation_params.height),  // height
+        std::make_optional(generation_params.width),   // width
+        generation_params.num_inference_steps.value_or(
+            28),                                         // num_inference_steps
+        std::nullopt,                                    // sigmas
+        generation_params.guidance_scale.value_or(3.5),  // guidance_scale
+        generation_params.num_images_per_prompt.value_or(
+            1),                               // num_images_per_prompt
+        generators_opt,                       // generator
+        input_params.latents,                 // latents
+        input_params.prompt_embeds,           // prompt_embeds
+        input_params.negative_prompt_embeds,  // negative_prompt_embeds
+        input_params.pooled_prompt_embeds,    // pooled_prompt_embeds
+        input_params
+            .negative_pooled_prompt_embeds,  // negative_pooled_prompt_embeds
+        "pil",                               // output_type
+        generation_params.max_sequence_length.value_or(
+            512)  // max_sequence_length
+    );
     LOG(INFO) << "flux output" << output.images;
     return torch::Tensor();
   }
@@ -783,13 +806,18 @@ class FluxPipelineImpl : public torch::nn::Module {
     return FluxPipelineOutput{{image}};
   }
 
-  void load_model(std::unique_ptr<ModelLoader> loader) {
-    std::string model_path = loader->model_weights_path();
-    auto transformer_loader = ModelLoader::create(model_path + "/transformer");
-    auto vae_loader = ModelLoader::create(model_path + "/vae");
-    auto t5_loader = ModelLoader::create(model_path + "/text_encoder_2");
-    auto clip_loader = ModelLoader::create(model_path + "/text_encoder");
-    int card_id = 14;
+  void load_model(std::unique_ptr<DiTModelLoader> loader) {
+    LOG(INFO) << "FluxPipeline loading model...";
+    LOG(INFO) << "Loading Flux model from: " << loader->model_root_path()
+              << loader->component_names();
+    std::string model_path = loader->model_root_path();
+    auto transformer_loader =
+        loader->take_sub_model_loader_by_folder("transformer");
+    auto vae_loader = loader->take_sub_model_loader_by_folder("vae");
+    auto t5_loader = loader->take_sub_model_loader_by_folder("text_encoder_2");
+    auto clip_loader = loader->take_sub_model_loader_by_folder("text_encoder");
+    LOG(INFO)
+        << "Flux model components loaded, start to load weights to sub models";
     transformer_->load_model(std::move(transformer_loader));
     transformer_->to(_execution_device);
     vae_->load_model(std::move(vae_loader));
@@ -801,4 +829,5 @@ class FluxPipelineImpl : public torch::nn::Module {
   }
 };
 TORCH_MODULE(FluxPipeline);
+REGISTER_DIT_MODEL(flux, FluxPipeline);
 }  // namespace xllm::hf

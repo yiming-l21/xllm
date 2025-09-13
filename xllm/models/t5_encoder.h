@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "core/framework/dit_model_loader.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
 #include "framework/context.h"
@@ -939,7 +940,7 @@ class T5EncoderModelImpl : public torch::nn::Module {
     return outputs[0];
   }
 
-  void load_model(std::unique_ptr<ModelLoader> loader) {
+  void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     for (const auto& state_dict : loader->get_state_dicts()) {
       const auto embedding_weight = state_dict->get_tensor("shared.weight");
       if (embedding_weight.defined()) {

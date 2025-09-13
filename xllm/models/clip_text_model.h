@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "core/framework/context.h"
+#include "core/framework/dit_model_loader.h"
 #include "core/framework/kv_cache/kv_cache.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/layers/npu/siglip_encoder_layer.h"
@@ -162,11 +163,20 @@ class CLIPTextEmbeddingImpl : public torch::nn::Module {
     int64_t seq_length = input_ids.size(1);
     int64_t max_position_embedding = position_embedding_.size(0);
     CHECK(seq_length <= max_position_embedding);
+    LOG(INFO) << "check embedding weights device: "
+              << token_embedding_->weight.device()
+              << ", dtype: " << token_embedding_->weight.dtype();
     torch::Tensor inputs_embeds = token_embedding_->forward(input_ids);
+    LOG(INFO) << "token embeddings: " << inputs_embeds.device()
+              << ", dtype: " << inputs_embeds.dtype();
     torch::Tensor position_ids = position_ids_.index(
         {torch::indexing::Slice(), torch::indexing::Slice(None, seq_length)});
+    LOG(INFO) << "position ids: " << position_ids.device()
+              << ", dtype: " << position_ids.dtype();
     torch::Tensor embeddings =
         inputs_embeds + position_embedding_.index({position_ids});
+    LOG(INFO) << "embeddings: " << embeddings.device()
+              << ", dtype: " << embeddings.dtype();
     return embeddings;
   }
 
@@ -789,7 +799,7 @@ class CLIPTextModelImpl : public torch::nn::Module {
     transformer_->verify_loaded_weights(prefix + ".");
   }
 
-  void load_model(std::unique_ptr<ModelLoader> loader) {
+  void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     LOG(INFO) << "Loading CLIPTextModel from ModelLoader...";
     for (const auto& state_dict : loader->get_state_dicts()) {
       transformer_->load_state_dict(

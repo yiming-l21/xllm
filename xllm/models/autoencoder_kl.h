@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "core/framework/dit_model_loader.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
 #include "framework/context.h"
@@ -2148,7 +2149,7 @@ class VAEImpl : public torch::nn::Module {
   }
   // TODO: Implement the forward method
 
-  void load_model(std::unique_ptr<ModelLoader> loader) {
+  void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     for (const auto& state_dict : loader->get_state_dicts()) {
       encoder_->load_state_dict(state_dict->get_dict_with_prefix("encoder."));
       decoder_->load_state_dict(state_dict->get_dict_with_prefix("decoder."));
