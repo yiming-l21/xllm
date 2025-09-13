@@ -276,6 +276,301 @@ DiTModelLoader::DiTModelLoader(const std::string& model_root_path)
 
     name_to_folder_[component_name] = component_folder;
     name_to_loader_[component_name] = std::move(sub_loader);
+    component_names_.push_back(component_name);
+    update_model_args(name_to_loader_[component_name]->model_args());
+  }
+}
+
+void DiTModelLoader::update_model_args(const ModelArgs& sub_args) {
+  // VAE
+  if (!arg_status_["vae_in_channels"] && sub_args.vae_in_channels() != -1) {
+    args_.vae_in_channels() = sub_args.vae_in_channels();
+    arg_status_["vae_in_channels"] = true;
+  }
+  if (!arg_status_["vae_out_channels"] && sub_args.vae_out_channels() != -1) {
+    args_.vae_out_channels() = sub_args.vae_out_channels();
+    arg_status_["vae_out_channels"] = true;
+  }
+  if (!arg_status_["vae_down_block_types"] &&
+      !sub_args.vae_down_block_types().empty()) {
+    args_.vae_down_block_types() = sub_args.vae_down_block_types();
+    arg_status_["vae_down_block_types"] = true;
+  }
+  if (!arg_status_["vae_up_block_types"] &&
+      !sub_args.vae_up_block_types().empty()) {
+    args_.vae_up_block_types() = sub_args.vae_up_block_types();
+    arg_status_["vae_up_block_types"] = true;
+  }
+  if (!arg_status_["vae_block_out_channels"] &&
+      !sub_args.vae_block_out_channels().empty()) {
+    args_.vae_block_out_channels() = sub_args.vae_block_out_channels();
+    arg_status_["vae_block_out_channels"] = true;
+  }
+  if (!arg_status_["vae_layers_per_block"] &&
+      sub_args.vae_layers_per_block() != 1) {
+    args_.vae_layers_per_block() = sub_args.vae_layers_per_block();
+    arg_status_["vae_layers_per_block"] = true;
+  }
+  if (!arg_status_["vae_act_fn"] && !sub_args.vae_act_fn().empty()) {
+    args_.vae_act_fn() = sub_args.vae_act_fn();
+    arg_status_["vae_act_fn"] = true;
+  }
+  if (!arg_status_["vae_latent_channels"] &&
+      sub_args.vae_latent_channels() != -1) {
+    args_.vae_latent_channels() = sub_args.vae_latent_channels();
+    arg_status_["vae_latent_channels"] = true;
+  }
+  if (!arg_status_["vae_norm_num_groups"] &&
+      sub_args.vae_norm_num_groups() != -1) {
+    args_.vae_norm_num_groups() = sub_args.vae_norm_num_groups();
+    arg_status_["vae_norm_num_groups"] = true;
+  }
+  if (!arg_status_["vae_sample_size"] && sub_args.vae_sample_size() != -1) {
+    args_.vae_sample_size() = sub_args.vae_sample_size();
+    arg_status_["vae_sample_size"] = true;
+  }
+  if (!arg_status_["vae_scale_factor"] && sub_args.vae_scale_factor() != 0.0f) {
+    args_.vae_scale_factor() = sub_args.vae_scale_factor();
+    arg_status_["vae_scale_factor"] = true;
+  }
+  if (!arg_status_["vae_shift_factor"] && sub_args.vae_shift_factor() != 0.0f) {
+    args_.vae_shift_factor() = sub_args.vae_shift_factor();
+    arg_status_["vae_shift_factor"] = true;
+  }
+  if (!arg_status_["vae_mid_block_add_attention"]) {
+    args_.vae_mid_block_add_attention() =
+        sub_args.vae_mid_block_add_attention();
+    arg_status_["vae_mid_block_add_attention"] = true;
+  }
+  if (!arg_status_["vae_force_upcast"]) {
+    args_.vae_force_upcast() = sub_args.vae_force_upcast();
+    arg_status_["vae_force_upcast"] = true;
+  }
+  if (!arg_status_["vae_use_quant_conv"]) {
+    args_.vae_use_quant_conv() = sub_args.vae_use_quant_conv();
+    arg_status_["vae_use_quant_conv"] = true;
+  }
+  if (!arg_status_["vae_use_post_quant_conv"]) {
+    args_.vae_use_post_quant_conv() = sub_args.vae_use_post_quant_conv();
+    arg_status_["vae_use_post_quant_conv"] = true;
+  }
+
+  // DiT
+  if (!arg_status_["dit_num_layers"] && sub_args.dit_num_layers() != 0) {
+    args_.dit_num_layers() = sub_args.dit_num_layers();
+    arg_status_["dit_num_layers"] = true;
+  }
+  if (!arg_status_["dit_patch_size"] && sub_args.dit_patch_size() != 0) {
+    args_.dit_patch_size() = sub_args.dit_patch_size();
+    arg_status_["dit_patch_size"] = true;
+  }
+  if (!arg_status_["dit_in_channels"] && sub_args.dit_in_channels() != 0) {
+    args_.dit_in_channels() = sub_args.dit_in_channels();
+    arg_status_["dit_in_channels"] = true;
+  }
+  if (!arg_status_["dit_attention_head_dim"] &&
+      sub_args.dit_attention_head_dim() != 0) {
+    args_.dit_attention_head_dim() = sub_args.dit_attention_head_dim();
+    arg_status_["dit_attention_head_dim"] = true;
+  }
+  if (!arg_status_["dit_num_attention_heads"] &&
+      sub_args.dit_num_attention_heads() != 0) {
+    args_.dit_num_attention_heads() = sub_args.dit_num_attention_heads();
+    arg_status_["dit_num_attention_heads"] = true;
+  }
+  if (!arg_status_["dit_joint_attention_dim"] &&
+      sub_args.dit_joint_attention_dim() != 0) {
+    args_.dit_joint_attention_dim() = sub_args.dit_joint_attention_dim();
+    arg_status_["dit_joint_attention_dim"] = true;
+  }
+  if (!arg_status_["dit_pooled_projection_dim"] &&
+      sub_args.dit_pooled_projection_dim() != 0) {
+    args_.dit_pooled_projection_dim() = sub_args.dit_pooled_projection_dim();
+    arg_status_["dit_pooled_projection_dim"] = true;
+  }
+  if (!arg_status_["dit_guidance_embeds"]) {
+    args_.dit_guidance_embeds() = sub_args.dit_guidance_embeds();
+    arg_status_["dit_guidance_embeds"] = true;
+  }
+  if (!arg_status_["dit_axes_dims_rope"] &&
+      !sub_args.dit_axes_dims_rope().empty()) {
+    args_.dit_axes_dims_rope() = sub_args.dit_axes_dims_rope();
+    arg_status_["dit_axes_dims_rope"] = true;
+  }
+  if (!arg_status_["dit_num_single_layers"] &&
+      sub_args.dit_num_single_layers() != 0) {
+    args_.dit_num_single_layers() = sub_args.dit_num_single_layers();
+    arg_status_["dit_num_single_layers"] = true;
+  }
+
+  // T5
+  if (!arg_status_["t5_vocab_size"] && sub_args.t5_vocab_size() != 0) {
+    args_.t5_vocab_size() = sub_args.t5_vocab_size();
+    arg_status_["t5_vocab_size"] = true;
+  }
+  if (!arg_status_["t5_d_model"] && sub_args.t5_d_model() != 0) {
+    args_.t5_d_model() = sub_args.t5_d_model();
+    arg_status_["t5_d_model"] = true;
+  }
+  if (!arg_status_["t5_num_layers"] && sub_args.t5_num_layers() != 0) {
+    args_.t5_num_layers() = sub_args.t5_num_layers();
+    arg_status_["t5_num_layers"] = true;
+  }
+  if (!arg_status_["t5_d_kv"] && sub_args.t5_d_kv() != 0) {
+    args_.t5_d_kv() = sub_args.t5_d_kv();
+    arg_status_["t5_d_kv"] = true;
+  }
+  if (!arg_status_["t5_num_heads"] && sub_args.t5_num_heads() != 0) {
+    args_.t5_num_heads() = sub_args.t5_num_heads();
+    arg_status_["t5_num_heads"] = true;
+  }
+  if (!arg_status_["t5_d_ff"] && sub_args.t5_d_ff() != 0) {
+    args_.t5_d_ff() = sub_args.t5_d_ff();
+    arg_status_["t5_d_ff"] = true;
+  }
+  if (!arg_status_["t5_dropout_rate"] && sub_args.t5_dropout_rate() != 0.0f) {
+    args_.t5_dropout_rate() = sub_args.t5_dropout_rate();
+    arg_status_["t5_dropout_rate"] = true;
+  }
+  if (!arg_status_["t5_dense_act_fn"] && !sub_args.t5_dense_act_fn().empty()) {
+    args_.t5_dense_act_fn() = sub_args.t5_dense_act_fn();
+    arg_status_["t5_dense_act_fn"] = true;
+  }
+  if (!arg_status_["t5_is_gated_act"]) {
+    args_.t5_is_gated_act() = sub_args.t5_is_gated_act();
+    arg_status_["t5_is_gated_act"] = true;
+  }
+  if (!arg_status_["t5_relative_attention_num_buckets"] &&
+      sub_args.t5_relative_attention_num_buckets() != 0) {
+    args_.t5_relative_attention_num_buckets() =
+        sub_args.t5_relative_attention_num_buckets();
+    arg_status_["t5_relative_attention_num_buckets"] = true;
+  }
+  if (!arg_status_["t5_relative_attention_max_distance"] &&
+      sub_args.t5_relative_attention_max_distance() != 0) {
+    args_.t5_relative_attention_max_distance() =
+        sub_args.t5_relative_attention_max_distance();
+    arg_status_["t5_relative_attention_max_distance"] = true;
+  }
+  if (!arg_status_["t5_layer_norm_epsilon"] &&
+      sub_args.t5_layer_norm_epsilon() != 0.0f) {
+    args_.t5_layer_norm_epsilon() = sub_args.t5_layer_norm_epsilon();
+    arg_status_["t5_layer_norm_epsilon"] = true;
+  }
+
+  // Scheduler
+  if (!arg_status_["scheduler_num_train_timesteps"] &&
+      sub_args.scheduler_num_train_timesteps() != 0) {
+    args_.scheduler_num_train_timesteps() =
+        sub_args.scheduler_num_train_timesteps();
+    arg_status_["scheduler_num_train_timesteps"] = true;
+  }
+  if (!arg_status_["scheduler_shift"] && sub_args.scheduler_shift() != 0) {
+    args_.scheduler_shift() = sub_args.scheduler_shift();
+    arg_status_["scheduler_shift"] = true;
+  }
+  if (!arg_status_["scheduler_use_dynamic_shifting"]) {
+    args_.scheduler_use_dynamic_shifting() =
+        sub_args.scheduler_use_dynamic_shifting();
+    arg_status_["scheduler_use_dynamic_shifting"] = true;
+  }
+  if (!arg_status_["scheduler_base_shift"] &&
+      sub_args.scheduler_base_shift() != 0.0f) {
+    args_.scheduler_base_shift() = sub_args.scheduler_base_shift();
+    arg_status_["scheduler_base_shift"] = true;
+  }
+  if (!arg_status_["scheduler_max_shift"] &&
+      sub_args.scheduler_max_shift() != 0.0f) {
+    args_.scheduler_max_shift() = sub_args.scheduler_max_shift();
+    arg_status_["scheduler_max_shift"] = true;
+  }
+  if (!arg_status_["scheduler_base_image_seq_len"] &&
+      sub_args.scheduler_base_image_seq_len() != 0) {
+    args_.scheduler_base_image_seq_len() =
+        sub_args.scheduler_base_image_seq_len();
+    arg_status_["scheduler_base_image_seq_len"] = true;
+  }
+  if (!arg_status_["scheduler_max_image_seq_len"] &&
+      sub_args.scheduler_max_image_seq_len() != 0) {
+    args_.scheduler_max_image_seq_len() =
+        sub_args.scheduler_max_image_seq_len();
+    arg_status_["scheduler_max_image_seq_len"] = true;
+  }
+
+  // Clip
+  if (!arg_status_["clip_vocab_size"] && sub_args.clip_vocab_size() != -1) {
+    args_.clip_vocab_size() = sub_args.clip_vocab_size();
+    arg_status_["clip_vocab_size"] = true;
+  }
+  if (!arg_status_["clip_hidden_size"] && sub_args.clip_hidden_size() != -1) {
+    args_.clip_hidden_size() = sub_args.clip_hidden_size();
+    arg_status_["clip_hidden_size"] = true;
+  }
+  if (!arg_status_["clip_intermediate_size"] &&
+      sub_args.clip_intermediate_size() != -1) {
+    args_.clip_intermediate_size() = sub_args.clip_intermediate_size();
+    arg_status_["clip_intermediate_size"] = true;
+  }
+  if (!arg_status_["clip_projection_dim"] &&
+      sub_args.clip_projection_dim() != -1) {
+    args_.clip_projection_dim() = sub_args.clip_projection_dim();
+    arg_status_["clip_projection_dim"] = true;
+  }
+  if (!arg_status_["clip_num_attention_heads"] &&
+      sub_args.clip_num_attention_heads() != -1) {
+    args_.clip_num_attention_heads() = sub_args.clip_num_attention_heads();
+    arg_status_["clip_num_attention_heads"] = true;
+  }
+  if (!arg_status_["clip_num_hidden_layers"] &&
+      sub_args.clip_num_hidden_layers() != -1) {
+    args_.clip_num_hidden_layers() = sub_args.clip_num_hidden_layers();
+    arg_status_["clip_num_hidden_layers"] = true;
+  }
+  if (!arg_status_["clip_layer_norm_eps"] &&
+      sub_args.clip_layer_norm_eps() != -1) {
+    args_.clip_layer_norm_eps() = sub_args.clip_layer_norm_eps();
+    arg_status_["clip_layer_norm_eps"] = true;
+  }
+  if (!arg_status_["clip_hidden_act"] && !sub_args.clip_hidden_act().empty()) {
+    args_.clip_hidden_act() = sub_args.clip_hidden_act();
+    arg_status_["clip_hidden_act"] = true;
+  }
+  if (!arg_status_["clip_max_position_embeddings"] &&
+      sub_args.clip_max_position_embeddings() != -1) {
+    args_.clip_max_position_embeddings() =
+        sub_args.clip_max_position_embeddings();
+    arg_status_["clip_max_position_embeddings"] = true;
+  }
+  if (!arg_status_["clip_bos_token_id"] && sub_args.clip_bos_token_id() != 0) {
+    args_.clip_bos_token_id() = sub_args.clip_bos_token_id();
+    arg_status_["clip_bos_token_id"] = true;
+  }
+  if (!arg_status_["clip_eos_token_id"] && sub_args.clip_eos_token_id() != 0) {
+    args_.clip_eos_token_id() = sub_args.clip_eos_token_id();
+    arg_status_["clip_eos_token_id"] = true;
+  }
+  if (!arg_status_["clip_pad_token_id"] && sub_args.clip_pad_token_id() != 0) {
+    args_.clip_pad_token_id() = sub_args.clip_pad_token_id();
+    arg_status_["clip_pad_token_id"] = true;
+  }
+  if (!arg_status_["clip_attention_dropout"] &&
+      sub_args.clip_attention_dropout() != 0.0f) {
+    args_.clip_attention_dropout() = sub_args.clip_attention_dropout();
+    arg_status_["clip_attention_dropout"] = true;
+  }
+  if (!arg_status_["clip_initializer_factor"] &&
+      sub_args.clip_initializer_factor() != 0.0f) {
+    args_.clip_initializer_factor() = sub_args.clip_initializer_factor();
+    arg_status_["clip_initializer_factor"] = true;
+  }
+  if (!arg_status_["clip_initializer_range"] &&
+      sub_args.clip_initializer_range() != 0.0f) {
+    args_.clip_initializer_range() = sub_args.clip_initializer_range();
+    arg_status_["clip_initializer_range"] = true;
+  }
+  if (!arg_status_["clip_head_dim"] && sub_args.clip_head_dim() != 0) {
+    args_.clip_head_dim() = sub_args.clip_head_dim();
+    arg_status_["clip_head_dim"] = true;
   }
 }
 
@@ -298,6 +593,73 @@ const DiTFolderLoader* DiTModelLoader::get_sub_model_loader_by_folder(
       return name_to_loader_.at(name).get();
     }
   }
+  LOG(WARNING) << "Component folder not found: " << component_folder;
+  return nullptr;
+}
+
+std::unique_ptr<DiTFolderLoader> DiTModelLoader::take_sub_model_loader_by_name(
+    const std::string& component_name) {
+  auto it = name_to_loader_.find(component_name);
+  if (it == name_to_loader_.end()) {
+    LOG(WARNING) << "Component not found: " << component_name;
+    return nullptr;
+  }
+
+  // move ownership out
+  std::unique_ptr<DiTFolderLoader> taken = std::move(it->second);
+
+  // erase from maps / lists
+  name_to_loader_.erase(it);
+  name_to_folder_.erase(component_name);
+
+  // remove from component_names_
+  component_names_.erase(
+      std::remove(
+          component_names_.begin(), component_names_.end(), component_name),
+      component_names_.end());
+
+  return taken;
+}
+
+std::unique_ptr<DiTFolderLoader>
+DiTModelLoader::take_sub_model_loader_by_folder(
+    const std::string& component_folder) {
+  std::filesystem::path abs_folder =
+      std::filesystem::absolute(component_folder);
+  for (auto it = name_to_folder_.begin(); it != name_to_folder_.end(); ++it) {
+    if (it->second == abs_folder.string()) {
+      const std::string name = it->first;
+
+      auto loader_it = name_to_loader_.find(name);
+      if (loader_it == name_to_loader_.end()) {
+        // inconsistency: folder exists but loader not found
+        LOG(WARNING) << "Loader for folder found in name_to_folder_ but "
+                        "missing in name_to_loader_: "
+                     << name;
+        // remove folder entry and continue/return nullptr as you prefer
+        name_to_folder_.erase(it);
+        component_names_.erase(
+            std::remove(component_names_.begin(), component_names_.end(), name),
+            component_names_.end());
+        return nullptr;
+      }
+
+      std::unique_ptr<DiTFolderLoader> taken = std::move(loader_it->second);
+
+      // erase loader and folder entries
+      name_to_loader_.erase(loader_it);
+      // erase by iterator `it` (valid)
+      name_to_folder_.erase(it);
+
+      // remove from component_names_
+      component_names_.erase(
+          std::remove(component_names_.begin(), component_names_.end(), name),
+          component_names_.end());
+
+      return taken;
+    }
+  }
+
   LOG(WARNING) << "Component folder not found: " << component_folder;
   return nullptr;
 }

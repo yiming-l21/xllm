@@ -68,16 +68,36 @@ class DiTModelLoader {
   const DiTFolderLoader* get_sub_model_loader_by_folder(
       const std::string& component_folder) const;
 
+  std::unique_ptr<DiTFolderLoader> take_sub_model_loader_by_name(
+      const std::string& component_name);
+
+  std::unique_ptr<DiTFolderLoader> take_sub_model_loader_by_folder(
+      const std::string& component_folder);
+
   std::vector<std::string> get_all_sub_model_names() const;
 
   bool has_sub_model(const std::string& component_name) const;
+  std::string model_root_path() const { return model_root_path_; }
+  const ModelArgs& model_args() const { return args_; }
+
+  const std::vector<std::string>& component_names() const {
+    return component_names_;
+  }
 
  private:
+  void update_model_args(const ModelArgs& args);
+
+  ModelArgs args_;
+
+  std::unordered_map<std::string, bool> arg_status_;
+
   std::string model_root_path_;
 
   std::unordered_map<std::string, std::unique_ptr<DiTFolderLoader>>
       name_to_loader_;
 
   std::unordered_map<std::string, std::string> name_to_folder_;
+
+  std::vector<std::string> component_names_;
 };
 }  // namespace xllm
