@@ -7,10 +7,14 @@ cc_library(
     replace_token.h
     top_k_top_p.h
     acltensor_utils.h
+    flash_attention_score.h
+    rms_norm.h
   SRCS
     replace_token.cpp
     top_k_top_p.cpp
     acltensor_utils.cpp
+    flash_attention_score.cpp
+    rms_norm.cpp
   DEPS
     atb
     torch_npu
