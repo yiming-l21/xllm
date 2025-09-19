@@ -729,6 +729,9 @@ class FluxPipelineImpl : public torch::nn::Module {
     scheduler_->set_begin_index(0);
     torch::Tensor timestep =
         torch::empty({prepared_latents.size(0)}, prepared_latents.options());
+    // RoPE outplace computation
+    std::optional<torch::Tensor> image_rotary_emb_opt = std::nullopt;
+    std::optional<torch::Tensor> image_rotary_emb_opt_neg = std::nullopt;
     for (int64_t i = 0; i < timesteps.numel(); ++i) {
       if (_interrupt) break;
 
@@ -737,28 +740,40 @@ class FluxPipelineImpl : public torch::nn::Module {
       timestep.fill_(t.item<float>())
           .to(prepared_latents.dtype())
           .div_(1000.0f);
-      torch::Tensor noise_pred = transformer_->forward(prepared_latents,
-                                                       encoded_prompt_embeds,
-                                                       encoded_pooled_embeds,
-                                                       timestep,
-                                                       latent_image_ids,
-                                                       text_ids,
-                                                       guidance,
-                                                       0);
+      torch::Tensor noise_pred, negative_noise_pred, image_rotary_emb_neg,
+          image_rotary_emb;
+      auto transformer_output = transformer_->forward(prepared_latents,
+                                                      encoded_prompt_embeds,
+                                                      encoded_pooled_embeds,
+                                                      timestep,
+                                                      latent_image_ids,
+                                                      text_ids,
+                                                      image_rotary_emb_opt,
+                                                      guidance,
+                                                      0);
+      noise_pred = transformer_output.first;
+      image_rotary_emb = transformer_output.second;
       if (do_true_cfg) {
-        torch::Tensor negative_noise_pred =
+        auto negative_transformer_output =
             transformer_->forward(prepared_latents,
                                   negative_encoded_embeds,
                                   negative_pooled_embeds,
                                   timestep,
                                   latent_image_ids,
                                   negative_text_ids,
+                                  image_rotary_emb_opt_neg,
                                   guidance,
                                   0);
+        negative_noise_pred = negative_transformer_output.first;
+        image_rotary_emb_neg = negative_transformer_output.second;
         noise_pred =
             noise_pred + (noise_pred - negative_noise_pred) * true_cfg_scale;
         negative_noise_pred.reset();
       }
+      // store the rotary embeddings for the next step
+      image_rotary_emb_opt = image_rotary_emb;
+      image_rotary_emb_opt_neg = image_rotary_emb_neg;
+
       auto prev_latents = scheduler_->step(noise_pred, t, prepared_latents);
       prepared_latents = prev_latents.prev_sample.detach();
       std::vector<torch::Tensor> tensors = {prepared_latents, noise_pred};
