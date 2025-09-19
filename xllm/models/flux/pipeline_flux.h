@@ -199,6 +199,9 @@ class FluxPipelineImpl : public torch::nn::Module {
   ModelArgs model_args_;
   torch::TensorOptions options_;
 
+  std::unique_ptr<Tokenizer> tokenizer_;
+  std::unique_ptr<Tokenizer> tokenizer_2_;
+
  public:
   FluxPipelineImpl(const ModelContext& context)
       : model_args_(context.get_model_args()),
@@ -445,51 +448,13 @@ class FluxPipelineImpl : public torch::nn::Module {
     int64_t batch_size = prompt_list.size();
     TORCH_CHECK(batch_size > 0, "Prompt list cannot be empty");
     std::vector<std::string> processed_prompt = prompt_list;
-    // TODO add CLIP tokenizer
-    //    auto text_inputs = tokenizer.encode(
-    //        processed_prompt,
-    //        tokenizer_max_length_,
-    //        true,
-    //        true
-    //    );
-    //    torch::Tensor text_input_ids = text_inputs.input_ids;
-    //    auto untruncated = tokenizer.encode(
-    //        processed_prompt,
-    //        0,
-    //        true,
-    //        false
-    //    );
-    //    torch::Tensor untruncated_ids = untruncated.input_ids;
-    //    if (untruncated_ids.size(1) >= text_input_ids.size(1) &&
-    //        !torch::equal(
-    //            text_input_ids,
-    //            untruncated_ids.index({torch::indexing::Slice(),
-    //            torch::indexing::Slice(0, text_input_ids.size(1))})
-    //        )) {
-    //
-    //        auto truncated_part = untruncated_ids.index({
-    //            torch::indexing::Slice(),
-    //            torch::indexing::Slice(tokenizer_max_length_ - 1, -1)
-    //        });
-    //        auto removed_text = tokenizer.batch_decode(truncated_part);
 
-    //       std::cerr << "Warning: The following part of your input was
-    //       truncated because CLIP can only handle sequences up to "
-    //                 << tokenizer_max_length_ << " tokens: ";
-    //       for (const auto& text : removed_text) {
-    //           std::cerr << text << " ";
-    //       }
-    //       std::cerr << std::endl;
-    //   }
-    std::vector<int64_t> text_input_ids = {
-        49406, 40555, 3155,  1844,  267,   12177, 2463,  268,   8893,  6469,
-        268,   1844,  1611,  49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        49407, 49407, 49407, 49407, 49407, 49407, 49407};
+    std::vector<int32_t> text_input_ids;
+    text_input_ids.reserve(tokenizer_max_length_);
+    CHECK(tokenizer_->encode(processed_prompt[0], &text_input_ids));
+    text_input_ids.resize(tokenizer_max_length_, 49407);
+    text_input_ids.back() = 49407;
+
     auto encoder_output = clip_text_model_->forward(text_input_ids);
     torch::Tensor prompt_embeds = encoder_output;
     prompt_embeds = prompt_embeds.to(used_device).to(_execution_dtype);
@@ -513,41 +478,17 @@ class FluxPipelineImpl : public torch::nn::Module {
     int64_t batch_size = prompt_list.size();
     TORCH_CHECK(batch_size > 0, "Prompt list cannot be empty");
     std::vector<std::string> processed_prompt = prompt_list;
-    // TODO add T5 tokenizer
-    //    auto text_inputs = tokenizer_2.encode(
-    //        processed_prompt,
-    //        max_sequence_length,
-    //        true,
-    //        true
-    //    );
-    //  torch::Tensor text_input_ids = text_inputs.input_ids;
-    torch::Tensor text_input_ids = t5_->create_text_ids();
-    //   auto untruncated = tokenizer_2.encode(
-    //       processed_prompt,
-    //       0,
-    //       true,
-    //       false
-    //   );
-    //   torch::Tensor untruncated_ids = untruncated.input_ids;
-    //   if (untruncated_ids.size(1) >= text_input_ids.size(1) &&
-    //       !torch::equal(text_input_ids,
-    //       untruncated_ids.index({torch::indexing::Slice(),
-    //       torch::indexing::Slice(0, text_input_ids.size(1))}))) { auto
-    //       truncated_part = untruncated_ids.index({
-    //           torch::indexing::Slice(),
-    //           torch::indexing::Slice(max_sequence_length - 1, -1)
-    //       });
-    //       auto removed_text = tokenizer_2.batch_decode(truncated_part);
 
-    //       std::cerr << "Warning: The following part of your input was
-    //       truncated because `max_sequence_length` is set to "
-    //                 << max_sequence_length << " tokens: ";
-    //       for (const auto& text : removed_text) {
-    //           std::cerr << text << " ";
-    //       }
-    //       std::cerr << std::endl;
-    //   }
-    torch::Tensor prompt_embeds = t5_->forward(text_input_ids.to(used_device));
+    std::vector<int32_t> text_input_ids;
+    text_input_ids.reserve(max_sequence_length);
+    CHECK(tokenizer_2_->encode(processed_prompt[0], &text_input_ids));
+    text_input_ids.resize(max_sequence_length, 0);
+
+    auto input_ids = torch::tensor(text_input_ids, torch::dtype(torch::kLong))
+                         .view({1, max_sequence_length})
+                         .to(used_device);
+
+    torch::Tensor prompt_embeds = t5_->forward(input_ids);
     prompt_embeds = prompt_embeds.to(used_dtype).to(used_device);
     int64_t seq_len = prompt_embeds.size(1);
     prompt_embeds = prompt_embeds.repeat({1, num_images_per_prompt, 1});
@@ -805,6 +746,10 @@ class FluxPipelineImpl : public torch::nn::Module {
     auto vae_loader = loader->take_sub_model_loader_by_folder("vae");
     auto t5_loader = loader->take_sub_model_loader_by_folder("text_encoder_2");
     auto clip_loader = loader->take_sub_model_loader_by_folder("text_encoder");
+    auto tokenizer_loader =
+        loader->take_sub_model_loader_by_folder("tokenizer");
+    auto tokenizer_2_loader =
+        loader->take_sub_model_loader_by_folder("tokenizer_2");
     LOG(INFO)
         << "Flux model components loaded, start to load weights to sub models";
     transformer_->load_model(std::move(transformer_loader));
@@ -815,6 +760,8 @@ class FluxPipelineImpl : public torch::nn::Module {
     t5_->to(_execution_device);
     clip_text_model_->load_model(std::move(clip_loader));
     clip_text_model_->to(_execution_device);
+    tokenizer_ = tokenizer_loader->tokenizer();
+    tokenizer_2_ = tokenizer_2_loader->tokenizer();
   }
 };
 TORCH_MODULE(FluxPipeline);
