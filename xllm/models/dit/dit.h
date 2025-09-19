@@ -1843,21 +1843,28 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
                                      patch_size * patch_size * out_channels_)
                 .bias(true)));
   }
-  torch::Tensor forward(const torch::Tensor& hidden_states_input,
-                        const torch::Tensor& encoder_hidden_states_input,
-                        const torch::Tensor& pooled_projections,
-                        const torch::Tensor& timestep,
-                        const torch::Tensor& img_ids,
-                        const torch::Tensor& txt_ids,
-                        const torch::Tensor& guidance,
-                        int64_t step_idx = 0) {
-    torch::Tensor ids = torch::cat(
-        {txt_ids.to(device_).to(dtype_), img_ids.to(device_).to(dtype_)}, 0);
-    auto [rot_emb1, rot_emb2] = pos_embed_->forward(ids);
-    rot_emb1 = rot_emb1.to(dtype_);
-    rot_emb2 = rot_emb2.to(dtype_);
-    torch::Tensor image_rotary_emb =
-        torch::stack({rot_emb1, rot_emb2}, 0).to(dtype_);
+  std::pair<torch::Tensor, torch::Tensor> forward(
+      const torch::Tensor& hidden_states_input,
+      const torch::Tensor& encoder_hidden_states_input,
+      const torch::Tensor& pooled_projections,
+      const torch::Tensor& timestep,
+      const torch::Tensor& img_ids,
+      const torch::Tensor& txt_ids,
+      const std::optional<torch::Tensor>& image_rotary_emb_opt,
+      const torch::Tensor& guidance,
+      int64_t step_idx = 0) {
+    torch::Tensor image_rotary_emb;
+    if (!image_rotary_emb_opt.has_value()) {
+      torch::Tensor ids = torch::cat(
+          {txt_ids.to(device_).to(dtype_), img_ids.to(device_).to(dtype_)}, 0);
+      auto [rot_emb1, rot_emb2] = pos_embed_->forward(ids);
+      rot_emb1 = rot_emb1.to(dtype_);
+      rot_emb2 = rot_emb2.to(dtype_);
+      image_rotary_emb = torch::stack({rot_emb1, rot_emb2}, 0).to(dtype_);
+    } else {
+      image_rotary_emb = image_rotary_emb_opt.value();
+    }
+
     torch::Tensor hidden_states =
         x_embedder_->forward(hidden_states_input.to(device_));
     auto timestep_scaled = timestep.to(hidden_states.dtype()) * 1000.0f;
@@ -1894,7 +1901,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
         hidden_states.narrow(1, start, std::max(length, int64_t(0)));
     output_hidden = norm_out_(output_hidden, temb);
 
-    return proj_out_(output_hidden);
+    return std::make_pair(proj_out_(output_hidden), image_rotary_emb);
   }
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     context_embedder_->to(device_);
@@ -2006,24 +2013,27 @@ class FluxDiTModelImpl : public torch::nn::Module {
                                dtype_));
     flux_transformer_2d_model_->to(dtype_);
   }
-  torch::Tensor forward(const torch::Tensor& hidden_states_input,
-                        const torch::Tensor& encoder_hidden_states_input,
-                        const torch::Tensor& pooled_projections,
-                        const torch::Tensor& timestep,
-                        const torch::Tensor& img_ids,
-                        const torch::Tensor& txt_ids,
-                        const torch::Tensor& guidance,
-                        int64_t step_idx = 0) {
-    torch::Tensor output =
+  std::pair<torch::Tensor, torch::Tensor> forward(
+      const torch::Tensor& hidden_states_input,
+      const torch::Tensor& encoder_hidden_states_input,
+      const torch::Tensor& pooled_projections,
+      const torch::Tensor& timestep,
+      const torch::Tensor& img_ids,
+      const torch::Tensor& txt_ids,
+      const std::optional<torch::Tensor>& image_rotary_emb_opt,
+      const torch::Tensor& guidance,
+      int64_t step_idx = 0) {
+    auto [output, image_embeddings] =
         flux_transformer_2d_model_->forward(hidden_states_input,
                                             encoder_hidden_states_input,
                                             pooled_projections,
                                             timestep,
                                             img_ids,
                                             txt_ids,
+                                            image_rotary_emb_opt,
                                             guidance,
                                             0);
-    return output;
+    return std::make_pair(output, image_embeddings);
   }
   torch::Tensor _prepare_latent_image_ids(int64_t batch_size,
                                           int64_t height,
@@ -2041,32 +2051,6 @@ class FluxDiTModelImpl : public torch::nn::Module {
     latent_image_ids = latent_image_ids.reshape({height * width, 3});
 
     return latent_image_ids;
-  }
-  torch::Tensor forward(const torch::Tensor& tokens,
-                        const torch::Tensor& positions,
-                        std::vector<KVCache>& kv_caches,
-                        const ModelInputParams& input_params) {
-    int seed = 42;
-    torch::manual_seed(seed);
-    auto hidden_states = torch::randn({1, 8100, 64}, device_);
-    torch::manual_seed(seed);
-    auto encoder_hidden_states = torch::randn({1, 512, 4096}, device_);
-    torch::manual_seed(seed);
-    auto pooled_projections = torch::randn({1, 768}, device_);
-    auto txt_ids = torch::zeros({512, 3}, device_);
-    auto img_ids = _prepare_latent_image_ids(1, 90, 90, device_, dtype_);
-    torch::Tensor timestep =
-        torch::tensor({1.0f}, torch::dtype(dtype_).device(device_));
-    torch::Tensor guidance =
-        torch::tensor({3.5f}, torch::dtype(dtype_).device(device_));
-    auto output = forward(hidden_states,
-                          encoder_hidden_states,
-                          pooled_projections,
-                          timestep,
-                          img_ids,
-                          txt_ids,
-                          guidance);
-    return output;
   }
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     flux_transformer_2d_model_->load_model(std::move(loader));
