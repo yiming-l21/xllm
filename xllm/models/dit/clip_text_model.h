@@ -24,22 +24,20 @@
 namespace xllm::hf {
 // Clip model ref to:
 // https://github.com/huggingface/transformers/blob/main/src/transformers/models/clip/modeling_clip.py#L152
-// https://github.com/huggingface/transformers/.../configuration_clip.py
 torch::Tensor quick_gelu(torch::Tensor x) {
-  return x * torch::sigmoid(1.702f * x).to(torch::kFloat32);
+  return x * torch::sigmoid(1.702 * x);
 }
 
 // causal_mask (batch_size, 1, seq_len, seq_len)
-torch::Tensor _create_4d_causal_attention_mask(
-    torch::IntArrayRef input_shape,  //[batch_size, seq_len, ...]
-    torch::Dtype dtype,
-    torch::Device device) {
+torch::Tensor _create_4d_causal_attention_mask(torch::IntArrayRef input_shape,
+                                               torch::Dtype dtype,
+                                               torch::Device device) {
   const int64_t bsz = input_shape[0];
   const int64_t tgt_len = input_shape[1];
 
-  auto causal_mask =
-      torch::full({tgt_len, tgt_len}, -std::numeric_limits<float>::infinity())
-          .to(device);
+  auto options = torch::TensorOptions().dtype(dtype).device(device);
+  auto causal_mask = torch::full(
+      {tgt_len, tgt_len}, -std::numeric_limits<double>::infinity(), options);
   causal_mask.triu_(1);
   causal_mask = causal_mask.unsqueeze(0).unsqueeze(0);
   causal_mask = causal_mask.expand({bsz, 1, tgt_len, tgt_len});
@@ -141,7 +139,6 @@ class CLIPTextEmbeddingImpl : public torch::nn::Module {
   CLIPTextEmbeddingImpl(const ModelContext& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     token_embedding_ =
         register_module("token_embedding",
                         torch::nn::Embedding(torch::nn::EmbeddingOptions(
@@ -163,24 +160,13 @@ class CLIPTextEmbeddingImpl : public torch::nn::Module {
     int64_t seq_length = input_ids.size(1);
     int64_t max_position_embedding = position_embedding_.size(0);
     CHECK(seq_length <= max_position_embedding);
-    LOG(INFO) << "check embedding weights device: "
-              << token_embedding_->weight.device()
-              << ", dtype: " << token_embedding_->weight.dtype();
 
     torch::Tensor inputs_embeds = token_embedding_->forward(input_ids);
-    LOG(INFO) << "token embeddings: " << inputs_embeds.device()
-              << ", dtype: " << inputs_embeds.dtype();
-
     torch::Tensor position_ids = position_ids_.index(
         {torch::indexing::Slice(),
          torch::indexing::Slice(torch::indexing::None, seq_length)});
-    LOG(INFO) << "position ids: " << position_ids.device()
-              << ", dtype: " << position_ids.dtype();
-
     torch::Tensor embeddings =
         inputs_embeds + position_embedding_.index({position_ids});
-    LOG(INFO) << "embeddings: " << embeddings.device()
-              << ", dtype: " << embeddings.dtype();
     return embeddings;
   }
 
@@ -223,9 +209,6 @@ class CLIPMLPImpl : public torch::nn::Module {
   CLIPMLPImpl(const ModelContext& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
-    // act_ = quick_gelu;
-    // CHECK(act_ != nullptr);
     act_ = register_module("act", torch::nn::Functional(quick_gelu));
 
     fc1_ = register_module("fc1",
@@ -311,7 +294,6 @@ class CLIPAttentionImpl : public torch::nn::Module {
   CLIPAttentionImpl(const ModelContext& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     CHECK(args.clip_hidden_size() % args.clip_num_attention_heads() == 0);
 
     head_dim_ = args.clip_head_dim();
@@ -375,7 +357,7 @@ class CLIPAttentionImpl : public torch::nn::Module {
     auto attn_weights =
         torch::matmul(query_states, key_states.transpose(-1, -2)) * scale_;
     if (causal_mask.defined()) attn_weights = attn_weights + causal_mask;
-    attn_weights = torch::softmax(attn_weights, -1, torch::kFloat32);
+    attn_weights = torch::softmax(attn_weights, -1);
     auto attn_probs = torch::dropout(attn_weights, dropout_, false);
     auto attn_output = torch::matmul(attn_probs, value_states);
 
@@ -513,7 +495,6 @@ class CLIPEncoderLayerImpl : public torch::nn::Module {
   CLIPEncoderLayerImpl(const ModelContext& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     self_attn_ = register_module("self_attn", CLIPAttention(context));
     layer_norm1_ = register_module(
         "layer_norm1",
@@ -617,7 +598,6 @@ class CLIPEncoderImpl : public torch::nn::Module {
   CLIPEncoderImpl(const ModelContext& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     blocks_ = register_module("layers", torch::nn::ModuleList());
     layers_.reserve(args.clip_num_hidden_layers());
     for (int32_t i = 0; i < args.clip_num_hidden_layers(); i++) {
@@ -681,7 +661,6 @@ class CLIPTextTransformerImpl : public torch::nn::Module {
   CLIPTextTransformerImpl(const ModelContext& context) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
-    options = options.dtype(torch::kFloat32).device(torch::kCPU);
     embeddings_ = register_module("embeddings", CLIPTextEmbedding(context));
     final_layer_norm_ = register_module(
         "final_layer_norm",
@@ -701,8 +680,7 @@ class CLIPTextTransformerImpl : public torch::nn::Module {
     }
     auto input_shape = input_ids.sizes();
     auto reshaped_input_ids = input_ids.view({-1, input_shape.back()});
-    auto hidden_states =
-        embeddings_->forward(reshaped_input_ids);  // hidden_states.dtype()
+    auto hidden_states = embeddings_->forward(reshaped_input_ids);
     auto causal_mask = _create_4d_causal_attention_mask(
         {input_shape[0], input_shape[1]},
         torch::typeMetaToScalarType(hidden_states.dtype()),
@@ -761,12 +739,11 @@ class CLIPTextModelImpl : public torch::nn::Module {
  public:
   CLIPTextModelImpl(const ModelContext& context,
                     torch::Device device = torch::kCPU,
-                    torch::ScalarType dtype = torch::kFloat32) {
+                    torch::ScalarType dtype = torch::kBFloat16) {
     auto args = context.get_model_args();
     auto options = context.get_tensor_options();
     device_ = device;
     dtype_ = dtype;
-    // context.set_tensor_options(options_float32);
     eos_token_id = args.clip_eos_token_id();
     transformer_ = register_module("transformer", CLIPTextTransformer(context));
   }
@@ -819,7 +796,7 @@ class CLIPTextModelImpl : public torch::nn::Module {
   int64_t eos_token_id;
   CLIPTextTransformer transformer_{nullptr};
   torch::Device device_{torch::kCPU};  // Default to CPU, can be set later
-  torch::ScalarType dtype_{torch::kFloat32};
+  torch::ScalarType dtype_{torch::kBFloat16};
 };
 TORCH_MODULE(CLIPTextModel);
 
