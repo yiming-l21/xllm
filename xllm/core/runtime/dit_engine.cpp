@@ -19,6 +19,8 @@ limitations under the License.
 #include <glog/logging.h>
 #include <sys/sysinfo.h>
 
+#include "core/common/metrics.h"
+#include "util/timer.h"
 #include "worker.h"
 
 namespace xllm {
@@ -68,7 +70,7 @@ bool DiTEngine::init() {
 }
 
 bool DiTEngine::init_model() {
-
+  const std::string& model_path = options_.model_path();
   // init model for each worker in parallel
   // multiple workers, call async init
   std::vector<folly::SemiFuture<bool>> futures;

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "core/framework/model_context.h"
+#include "core/framework/dit_model_context.h"
 
 #include <torch/torch.h>
 #if defined(USE_NPU)
@@ -28,14 +28,15 @@ limitations under the License.
 #endif
 
 namespace xllm {
-ModelContext::ModelContext(const ParallelArgs& input_parallel_args,
-                           std::unordered_map<std::string, ModelArgs>& model_args,
-                           std::unordered_map<std::string, QuantArgs>& quant_args,
-                           const torch::TensorOptions& tensor_options,
-                           const std::string& model_type)
+DiTModelContext::DiTModelContext(
+    const ParallelArgs& input_parallel_args,
+    const std::unordered_map<std::string, ModelArgs>& model_args,
+    const std::unordered_map<std::string, QuantArgs>& quant_args,
+    const torch::TensorOptions& tensor_options,
+    const std::string& model_type)
     : parallel_args_(input_parallel_args),
-      model_args_(model_args),
-      quant_args_(quant_args),
+      model_args_(std::move(model_args)),
+      quant_args_(std::move(quant_args)),
       tensor_options_(tensor_options),
       model_type_(model_type) {
 #if defined(USE_NPU)
@@ -47,24 +48,37 @@ ModelContext::ModelContext(const ParallelArgs& input_parallel_args,
 #endif
 }
 
-const ModelArgs& DiTModelLoader::get_model_args(const std::string& component) const {
-  auto& itor = name_to_loader_.find(component);
-  if(itor!=name_to_loader_.end()) {
-    return itor->second->model_args();
+const ModelArgs& DiTModelContext::get_model_args(
+    const std::string& component) const {
+  const auto& itor = model_args_.find(component);
+  if (itor != model_args_.end()) {
+    return itor->second;
   } else {
-    LOG(FATAL)<<"model args not found, component:"<<component;
-    return {};
+    LOG(FATAL) << "model args not found, component:" << component;
+    static ModelArgs args;
+    return args;
   }
 }
 
-const QuantArgs& DiTModelLoader::get_quant_args(const std::string& component) const {
-  auto& itor = name_to_loader_.find(component);
-  if(itor!=name_to_loader_.end()) {
-    return itor->second->quant_args();
+const QuantArgs& DiTModelContext::get_quant_args(
+    const std::string& component) const {
+  const auto& itor = quant_args_.find(component);
+  if (itor != quant_args_.end()) {
+    return itor->second;
   } else {
-    LOG(FATAL)<<"qunat args not found, component:"<<component;
-    return {};
+    LOG(FATAL) << "qunat args not found, component:" << component;
+    static QuantArgs args;
+    return args;
   }
+}
+
+ModelContext DiTModelContext::get_model_context(
+    const std::string& component) const {
+  return ModelContext(parallel_args_,
+                      get_model_args(component),
+                      get_quant_args(component),
+                      tensor_options_,
+                      context_);
 }
 
 }  // namespace xllm

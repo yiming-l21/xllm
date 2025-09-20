@@ -150,7 +150,7 @@ struct Options {
 
   // dit
   // max requests per batch
-  PROPERTY(std::string, max_requests_per_batch) = 1;
+  PROPERTY(int, max_requests_per_batch) = 0;
 };
 
 }  // namespace runtime

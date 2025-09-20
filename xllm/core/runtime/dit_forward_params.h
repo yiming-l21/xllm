@@ -29,9 +29,10 @@ namespace xllm {
 struct DiTForwardInput {
   DiTForwardInput to(const torch::Device& device,
                      torch::ScalarType dtype) const {
-    DiTForwardInput inputs;
-    inputs.input_params = input_params.to(device, dtype);
-    return inputs;
+    DiTForwardInput input;
+    input.input_params = input_params.to(device, dtype);
+    input.generation_params = generation_params;
+    return input;
   }
 
   DiTInputParams input_params;

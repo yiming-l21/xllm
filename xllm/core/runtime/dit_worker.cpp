@@ -43,6 +43,7 @@ limitations under the License.
 #include "models/model_registry.h"
 #include "util/threadpool.h"
 #include "util/timer.h"
+#include "util/utils.h"
 
 namespace xllm {
 DiTWorker::DiTWorker(const ParallelArgs& parallel_args,
@@ -51,7 +52,6 @@ DiTWorker::DiTWorker(const ParallelArgs& parallel_args,
     : device_(device), options_(options), parallel_args_(parallel_args) {}
 
 bool DiTWorker::init_model(const std::string& model_weights_path) {
-
   CHECK(dit_model_ == nullptr) << "Model is already initialized.";
   int currentDevId = device_.index();
 #if defined(USE_NPU)
@@ -64,23 +64,22 @@ bool DiTWorker::init_model(const std::string& model_weights_path) {
 // TODO(mlu): implement mlu set device
 #endif
 
-
   auto loader = std::make_unique<DiTModelLoader>(model_weights_path);
-  dtype_ = util::parse_dtype(loader.get_torch_dtype(), device_);
+  dtype_ = util::parse_dtype(loader->get_torch_dtype(), device_);
 
-  auto tensor_options = torch::dtype(dtype_).ddevice(device_);
-  context_ = DiTModelContext(parallel_args_, 
-                             loader->get_model_args(),
-                             loader->get_quant_args(),
-                             tensor_options
+  auto tensor_options = torch::dtype(dtype_).device(device_);
+  context_ = DiTModelContext(parallel_args_,
+                             std::move(loader->get_model_args()),
+                             std::move(loader->get_quant_args()),
+                             tensor_options,
                              options_.model_id());
 
   dit_model_ = create_dit_model(context_);
   CHECK(dit_model_ != nullptr) << "Failed to create model.";
-  dit_model_->load_model(loader);
+  dit_model_->load_model(std::move(loader));
 
-  dit_model_executor_ = std::make_unique<DiTExecutor>(
-      dit_model_.get(), loader, options_);
+  dit_model_executor_ =
+      std::make_unique<DiTExecutor>(dit_model_.get(), options_);
 
   return true;
 }
@@ -92,12 +91,8 @@ std::optional<DiTForwardOutput> DiTWorker::step(const DiTForwardInput& inputs) {
 // TODO(mlu): implement mlu set device
 #endif
   Timer timer;
-  // all tensors should be on the same device as model
-  auto input_params = inputs.input_params.to(device_, dtype_);
 
-  // call model executor forward to get hidden states
-  auto output =
-      dit_model_executor_->forward(input_params, inputs.generation_params);
+  auto output = dit_model_executor_->forward(inputs.to(device_, dtype_));
 
 #if defined(USE_NPU)
   torch::npu::synchronize();

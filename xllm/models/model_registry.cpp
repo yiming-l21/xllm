@@ -236,14 +236,12 @@ std::unique_ptr<EmbeddingLM> create_embeddinglm_model(
 
 std::unique_ptr<DiTModel> create_dit_model(const DiTModelContext& context) {
   // get the factory function for the model type from model registry
-  auto factory = ModelRegistry::get_dit_model_factory(
-      context.model_type());
+  auto factory = ModelRegistry::get_dit_model_factory(context.model_type());
   if (factory) {
     return factory(context);
   }
   LOG(INFO) << "DiT Model type: " << context.model_type();
-  LOG(ERROR) << "Unsupported model type: "
-             << context..model_type();
+  LOG(ERROR) << "Unsupported model type: " << context.model_type();
 
   return nullptr;
 }

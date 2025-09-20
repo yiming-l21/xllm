@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 
 #include "core/framework/model/model_args.h"
+#include "core/framework/model_context.h"
 #include "core/framework/parallel_state.h"
 #include "core/framework/quant_args.h"
 
@@ -29,9 +30,11 @@ namespace xllm {
 
 class DiTModelContext {
  public:
+  DiTModelContext() : parallel_args_(1, 1, nullptr) {};
+
   DiTModelContext(const ParallelArgs& input_parallel_args,
-                  std::unordered_map<std::string, ModelArgs>& model_args,
-                  std::unordered_map<std::string, QuantArgs>& quant_args,
+                  const std::unordered_map<std::string, ModelArgs>& model_args,
+                  const std::unordered_map<std::string, QuantArgs>& quant_args,
                   const torch::TensorOptions& tensor_options,
                   const std::string& model_type);
 
@@ -39,15 +42,15 @@ class DiTModelContext {
 
   const QuantArgs& get_quant_args(const std::string& component) const;
 
+  ModelContext get_model_context(const std::string& component) const;
+
   const ParallelArgs& get_parallel_args() const { return parallel_args_; }
 
   const torch::TensorOptions& get_tensor_options() const {
     return tensor_options_;
   }
 
-  const std::string& model_type() const {
-    return model_type_;
-  }
+  const std::string& model_type() const { return model_type_; }
 
   const atb::Context* get_atb_context() const { return context_; }
 

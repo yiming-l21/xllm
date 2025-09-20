@@ -204,7 +204,6 @@ class FluxPipelineImpl : public torch::nn::Module {
  public:
   FluxPipelineImpl(const DiTModelContext& context)
       : options_(context.get_tensor_options()) {
-
     const auto& model_args = context.get_model_args("vae");
     vae_scale_factor_ = 1 << (model_args.vae_block_out_channels().size() - 1);
     _execution_device = options_.device();
@@ -220,16 +219,23 @@ class FluxPipelineImpl : public torch::nn::Module {
     vae_image_processor_ = VAEImageProcessor(
         true, vae_scale_factor_, 4, "lanczos", -1, true, false, false, false);
     LOG(INFO) << "VAE image processor initialized.";
-    vae_ = VAE(context, _execution_device, _execution_dtype);
+    vae_ = VAE(
+        context.get_model_context("vae"), _execution_device, _execution_dtype);
     LOG(INFO) << "VAE initialized.";
-    transformer_ = FluxDiTModel(context, _execution_device, _execution_dtype);
+    transformer_ = FluxDiTModel(context.get_model_context("transformer"),
+                                _execution_device,
+                                _execution_dtype);
     LOG(INFO) << "DiT transformer initialized.";
-    t5_ = T5EncoderModel(context, _execution_device, _execution_dtype);
+    t5_ = T5EncoderModel(context.get_model_context("text_encoder_2"),
+                         _execution_device,
+                         _execution_dtype);
     LOG(INFO) << "T5 initialized.";
-    clip_text_model_ =
-        CLIPTextModel(context, _execution_device, _execution_dtype);
+    clip_text_model_ = CLIPTextModel(context.get_model_context("text_encoder"),
+                                     _execution_device,
+                                     _execution_dtype);
     LOG(INFO) << "CLIP text model initialized.";
-    scheduler_ = FlowMatchEulerDiscreteScheduler(context);
+    scheduler_ =
+        FlowMatchEulerDiscreteScheduler(context.get_model_context("scheduler"));
     LOG(INFO) << "Flux pipeline initialized.";
     // register modules
     register_module("vae", vae_);
@@ -396,8 +402,10 @@ class FluxPipelineImpl : public torch::nn::Module {
         batch_size, adjusted_height / 2, adjusted_width / 2, device, dtype);
     return {packed_latents, latent_image_ids};
   }
-  DiTForwardOutput forward(const DiTInputParams& input_params,
-                        const DiTGenerationParams& generation_params) {
+  DiTForwardOutput forward(const DiTForwardInput& input) {
+    const auto& input_params = input.input_params;
+    const auto& generation_params = input.generation_params;
+
     torch::Generator generator = torch::Generator();
     torch::manual_seed(generation_params.seed.value_or(42));
     std::vector<torch::Generator> generators_vec;

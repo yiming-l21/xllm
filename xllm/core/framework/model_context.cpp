@@ -44,4 +44,16 @@ ModelContext::ModelContext(const ParallelArgs& input_parallel_args,
   context_->SetAsyncTilingCopyStatus(true);
 #endif
 }
+
+ModelContext::ModelContext(const ParallelArgs& input_parallel_args,
+                           const ModelArgs& model_args,
+                           const QuantArgs& quant_args,
+                           const torch::TensorOptions& tensor_options,
+                           atb::Context* context)
+    : parallel_args_(input_parallel_args),
+      model_args_(model_args),
+      quant_args_(quant_args),
+      tensor_options_(tensor_options),
+      context_(context) {}
+
 }  // namespace xllm

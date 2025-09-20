@@ -36,6 +36,12 @@ class ModelContext {
                const QuantArgs& quant_args,
                const torch::TensorOptions& tensor_options);
 
+  ModelContext(const ParallelArgs& input_parallel_args,
+               const ModelArgs& model_args,
+               const QuantArgs& quant_args,
+               const torch::TensorOptions& tensor_options,
+               atb::Context* context);
+
   const ModelArgs& get_model_args() const { return model_args_; }
 
   const QuantArgs& get_quant_args() const { return quant_args_; }

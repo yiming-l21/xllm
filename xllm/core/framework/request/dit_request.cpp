@@ -54,7 +54,7 @@ const DiTRequestOutput DiTRequest::generate_output(
   output.cancelled = false;
 
   DiTGenerationOutput result;
-  result.image = dit_output.image;
+  // result.image = dit_output.image;
   result.height = state_.generation_params().height;
   result.width = state_.generation_params().width;
   result.seed = state_.generation_params().seed.value();

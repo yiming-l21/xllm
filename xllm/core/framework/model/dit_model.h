@@ -22,18 +22,17 @@ limitations under the License.
 #include <vector>
 
 #include "core/framework/dit_model_loader.h"
-#include "core/framework/request/dit_request_state.h"
+#include "core/runtime/dit_forward_params.h"
 namespace xllm {
 
 class DiTModel : public torch::nn::Module {
  public:
   ~DiTModel() override = default;
 
-  virtual DiTForwardOutput forward(const DiTInputParams& input_params,
-                                const DiTGenerationParams& gen_params) = 0;
+  virtual DiTForwardOutput forward(const DiTForwardInput& input) = 0;
   virtual torch::Device device() const = 0;
   virtual const torch::TensorOptions& options() const = 0;
-  virtual void load_model(std::unique_ptr<DiTModelLoader> loader) = 0;  
+  virtual void load_model(std::unique_ptr<DiTModelLoader> loader) = 0;
 };
 
 template <typename Model>
@@ -43,9 +42,8 @@ class DiTModelImpl : public DiTModel {
       : model_(std::move(model)), options_(options) {
     LOG(INFO) << "DiTModelImpl created.";
   }
-  DiTForwardOutput forward(const DiTInputParams& input_params,
-                        const DiTGenerationParams& gen_params) override {
-    return model_->forward(input_params, gen_params);
+  DiTForwardOutput forward(const DiTForwardInput& input) override {
+    return model_->forward(input);
   }
   torch::Device device() const override { return options_.device(); }
   const torch::TensorOptions& options() const override { return options_; }

@@ -20,11 +20,11 @@ limitations under the License.
 #include <string>
 #include <unordered_map>
 
+#include "core/framework/dit_model_context.h"
 #include "core/framework/model/causal_lm.h"
 #include "core/framework/model/causal_vlm.h"
 #include "core/framework/model/dit_model.h"
 #include "core/framework/model/embedding_lm.h"
-#include "core/framework/dit_model_context.h"
 #include "core/framework/model_context.h"
 #include "core/framework/parallel_state.h"
 #include "core/framework/tokenizer/tokenizer_args.h"
@@ -190,7 +190,7 @@ std::unique_ptr<DiTModel> create_dit_model(const DiTModelContext& context);
 #define REGISTER_DIT_MODEL_WITH_VARNAME(VarName, ModelType, ModelClass) \
   const bool VarName##_registered = []() {                              \
     ModelRegistry::register_dit_model_factory(                          \
-        #ModelType, [](const ModelContext& context) {                   \
+        #ModelType, [](const DiTModelContext& context) {                \
           ModelClass model(context);                                    \
           model->eval();                                                \
           return std::make_unique<xllm::DiTModelImpl<ModelClass>>(      \

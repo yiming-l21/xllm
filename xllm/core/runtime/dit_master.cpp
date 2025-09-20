@@ -41,7 +41,6 @@ limitations under the License.
 #include "torch_npu/csrc/core/npu/THNPUCachingHostAllocator.h"
 #endif
 
-
 namespace xllm {
 DiTMaster::DiTMaster(const Options& options)
     : Master(options, EngineType::DIT) {
@@ -54,8 +53,8 @@ DiTMaster::DiTMaster(const Options& options)
 
   runtime::Options eng_options;
   eng_options.model_path(options.model_path())
-             .model_id(options.model_id())
-             .devices(devices);
+      .model_id(options.model_id())
+      .devices(devices);
 
   engine_ = std::make_unique<DiTEngine>(eng_options);
   CHECK(engine_->init());
@@ -95,30 +94,32 @@ void DiTMaster::handle_request(DiTRequestParams params,
   };
 
   // add into the queue
-  threadpool_->schedule(
-      [this, params = std::move(params), callback = std::move(cb), call]() mutable {
-        AUTO_COUNTER(request_handling_latency_seconds_completion);
+  threadpool_->schedule([this,
+                         params = std::move(params),
+                         callback = std::move(cb),
+                         call]() mutable {
+    AUTO_COUNTER(request_handling_latency_seconds_completion);
 
-        // remove the pending request after scheduling
-        SCOPE_GUARD([this] { scheduler_->decr_pending_requests(); });
+    // remove the pending request after scheduling
+    SCOPE_GUARD([this] { scheduler_->decr_pending_requests(); });
 
-        Timer timer;
-        // verify the prompt
-        if (!params.verify_params(callback)) {
-          return;
-        }
-        DiTRequestState dit_state = DiTRequestState(
-            params.input_params, params.generation_params, callback, nullptr, call);
-        auto request = std::make_shared<DiTRequest>(params.request_id,
-                                                    params.x_request_id,
-                                                    params.x_request_time,
-                                                    std::move(dit_state));
+    Timer timer;
+    // verify the prompt
+    if (!params.verify_params(callback)) {
+      return;
+    }
+    DiTRequestState dit_state = DiTRequestState(
+        params.input_params, params.generation_params, callback, nullptr, call);
+    auto request = std::make_shared<DiTRequest>(params.request_id,
+                                                params.x_request_id,
+                                                params.x_request_time,
+                                                std::move(dit_state));
 
-        if (!scheduler_->add_request(request)) {
-          CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
-                              "No available resources to schedule request");
-        }
-      });
+    if (!scheduler_->add_request(request)) {
+      CALLBACK_WITH_ERROR(StatusCode::RESOURCE_EXHAUSTED,
+                          "No available resources to schedule request");
+    }
+  });
 }
 
 void DiTMaster::handle_batch_request(std::vector<DiTRequestParams> params_vec,
