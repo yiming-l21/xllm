@@ -31,6 +31,8 @@ namespace runtime {
 struct Options {
   PROPERTY(std::string, model_path);
 
+  PROPERTY(std::string, model_id);
+
   PROPERTY(std::optional<std::string>, draft_model_path);
 
   // devices for execute model
@@ -145,6 +147,10 @@ struct Options {
   // the address of the metadata service (e.g., etcd/Redis) required for
   // Transfer Engine initialization
   PROPERTY(std::string, store_metadata_connstring) = "";
+
+  // dit
+  // max requests per batch
+  PROPERTY(int, max_requests_per_batch) = 0;
 };
 
 }  // namespace runtime

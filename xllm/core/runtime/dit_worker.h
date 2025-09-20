@@ -21,7 +21,7 @@ limitations under the License.
 #include <thread>
 
 #include "dit_executor.h"
-#include "framework/model_context.h"
+#include "framework/dit_model_context.h"
 #include "options.h"
 #include "util/threadpool.h"
 
@@ -59,7 +59,7 @@ class DiTWorker {
   torch::ScalarType dtype_;
 
   // model context, includes model args, parallel args and date type etc.
-  mutable ModelContext context_;
+  mutable DiTModelContext context_;
 
   ParallelArgs parallel_args_;
 

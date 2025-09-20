@@ -37,6 +37,8 @@ class Options {
  private:
   PROPERTY(std::string, model_path);
 
+  PROPERTY(std::string, model_id);
+
   PROPERTY(std::optional<std::string>, devices);
 
   PROPERTY(std::optional<std::string>, draft_model_path);
@@ -156,6 +158,10 @@ class Options {
   PROPERTY(int32_t, max_global_ttft_ms) = std::numeric_limits<int32_t>::max();
   // all requests use single global tpot
   PROPERTY(int32_t, max_global_tpot_ms) = std::numeric_limits<int32_t>::max();
+
+  // dit
+  // max requests per batch
+  PROPERTY(int, max_requests_per_batch) = 0;
 };
 
 }  // namespace xllm

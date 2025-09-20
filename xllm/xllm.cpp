@@ -99,6 +99,7 @@ int run() {
   // Create Master
   Options options;
   options.model_path(FLAGS_model)
+      .model_id(FLAGS_model_id)
       .task_type(FLAGS_task)
       .devices(FLAGS_devices)
       .draft_model_path(FLAGS_draft_model)
@@ -157,7 +158,8 @@ int run() {
       .profile_max_prompt_length(FLAGS_profile_max_prompt_length)
       .enable_profile_kv_blocks(FLAGS_enable_profile_kv_blocks)
       .max_global_ttft_ms(FLAGS_max_global_ttft_ms)
-      .max_global_tpot_ms(FLAGS_max_global_tpot_ms);
+      .max_global_tpot_ms(FLAGS_max_global_tpot_ms)
+      .max_requests_per_batch(FLAGS_max_requests_per_batch);
   InstanceName::name()->set_name(options.instance_name().value_or(""));
 
   // working node

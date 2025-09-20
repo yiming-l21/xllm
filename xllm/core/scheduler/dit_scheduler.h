@@ -39,8 +39,7 @@ class DiTAsyncResponseProcessor final {
   DiTAsyncResponseProcessor() = default;
   ~DiTAsyncResponseProcessor() = default;
 
-  void process_completed_request(std::shared_ptr<DiTRequest> request,
-                                 const DiTForwardOutput& output);
+  void process_completed_request(std::shared_ptr<DiTRequest> request);
   void process_failed_request(std::shared_ptr<DiTRequest> request,
                               Status status);
 
@@ -120,7 +119,7 @@ class DiTDynamicBatchScheduler : public DiTScheduler {
   std::vector<DiTBatch> schedule_request(const absl::Duration& timeout);
 
   // process the batch output
-  void process_batch_output(const DiTForwardOutput& output);
+  void process_batch_output();
 };
 
 }  // namespace xllm

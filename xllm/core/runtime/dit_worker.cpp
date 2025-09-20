@@ -43,6 +43,7 @@ limitations under the License.
 #include "models/model_registry.h"
 #include "util/threadpool.h"
 #include "util/timer.h"
+#include "util/utils.h"
 
 namespace xllm {
 DiTWorker::DiTWorker(const ParallelArgs& parallel_args,
@@ -51,7 +52,6 @@ DiTWorker::DiTWorker(const ParallelArgs& parallel_args,
     : device_(device), options_(options), parallel_args_(parallel_args) {}
 
 bool DiTWorker::init_model(const std::string& model_weights_path) {
-  LOG(INFO) << "Initialize DiT model on device: " << device_;
   CHECK(dit_model_ == nullptr) << "Model is already initialized.";
   int currentDevId = device_.index();
 #if defined(USE_NPU)
@@ -63,25 +63,24 @@ bool DiTWorker::init_model(const std::string& model_weights_path) {
 #elif defined(USE_MLU)
 // TODO(mlu): implement mlu set device
 #endif
-  // initialize model
-  // ModelArgs tmp_model_args = model_args;
-  // context_.set_model_args(tmp_model_args);
-  // context_.set_quant_args(quant_args);
+
   auto loader = std::make_unique<DiTModelLoader>(model_weights_path);
-  ModelArgs model_args = loader->model_args();
-  model_args.model_type() = "flux";
-  torch::TensorOptions options = torch::TensorOptions().device(device_);
-  context_ = ModelContext(parallel_args_, model_args, QuantArgs(), options);
+  dtype_ = util::parse_dtype(loader->get_torch_dtype(), device_);
+
+  auto tensor_options = torch::dtype(dtype_).device(device_);
+  context_ = DiTModelContext(parallel_args_,
+                             std::move(loader->get_model_args()),
+                             std::move(loader->get_quant_args()),
+                             tensor_options,
+                             options_.model_id());
+
   dit_model_ = create_dit_model(context_);
-  LOG(INFO) << "DiT Model created.";
   CHECK(dit_model_ != nullptr) << "Failed to create model.";
   dit_model_->load_model(std::move(loader));
-  LOG(INFO) << "DiT Model loaded.";
-  DiTModelLoader exec_loader(model_weights_path);
-  dit_model_executor_ = std::make_unique<DiTExecutor>(
-      dit_model_.get(), std::move(exec_loader), options_);
 
-  LOG(INFO) << "DiT Model executor created.";
+  dit_model_executor_ =
+      std::make_unique<DiTExecutor>(dit_model_.get(), options_);
+
   return true;
 }
 
@@ -92,13 +91,8 @@ std::optional<DiTForwardOutput> DiTWorker::step(const DiTForwardInput& inputs) {
 // TODO(mlu): implement mlu set device
 #endif
   Timer timer;
-  // all tensors should be on the same device as model
-  auto input_params = inputs.input_params.to(device_, dtype_);
-  auto generation_params = inputs.generation_params;
 
-  // call model executor forward to get hidden states
-  auto hidden_states =
-      dit_model_executor_->forward(input_params, generation_params);
+  auto output = dit_model_executor_->forward(inputs.to(device_, dtype_));
 
 #if defined(USE_NPU)
   torch::npu::synchronize();
@@ -107,8 +101,6 @@ std::optional<DiTForwardOutput> DiTWorker::step(const DiTForwardInput& inputs) {
 #endif
   COUNTER_ADD(execution_latency_seconds_model, timer.elapsed_seconds());
 
-  DiTForwardOutput output;
-  output.image = std::move(hidden_states);
   return output;
 }
 

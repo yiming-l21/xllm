@@ -41,35 +41,17 @@ class DiTRequest : public RequestBase {
 
   bool finished() const;
 
-  const DiTRequestOutput generate_output(DiTForwardOutput dit_output);
+  int handle_forward_output(int offset, const DiTForwardOutput& output);
+
+  const DiTRequestOutput generate_output();
 
   void log_statistic(double total_latency);
 
   DiTRequestState& state() { return state_; }
 
  private:
-  // request create time
-  absl::Time created_time_;
-
-  std::string request_id_;
-
-  std::string service_request_id_;
-
-  // x-request-id header value from client
-  std::string x_request_id_;
-
-  // x-request-time header value from client
-  std::string x_request_time_;
-
   DiTRequestState state_;
-
-  std::atomic<bool> cancelled_{false};
-
-  bool offline_;
-
-  int32_t slo_ms_;
-
-  RequestPriority priority_;
+  DiTForwardOutput output_;
 };
 
 }  // namespace xllm

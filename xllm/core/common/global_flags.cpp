@@ -323,3 +323,6 @@ DEFINE_bool(
     false,
     "Whether to enable computation communication parallel by two streams "
     "and two micro batches in prefill stage.");
+
+// --- for dit ---
+DEFINE_int32(max_requests_per_batch, 1, "Max number of request per batch.");

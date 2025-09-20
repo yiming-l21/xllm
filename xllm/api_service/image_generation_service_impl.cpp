@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <string>
 
+#include "butil/base64.h"
 #include "common/instance_name.h"
 #include "framework/request/dit_request_output.h"
 #include "framework/request/dit_request_params.h"
@@ -42,10 +43,15 @@ bool send_result_to_client_brpc(std::shared_ptr<ImageGenerationCall> call,
   auto* proto_output = response.mutable_output();
   const std::vector<DiTGenerationOutput>& outputs = req_output.outputs;
   proto_output->mutable_results()->Reserve(outputs.size());
+
+  std::string image;
   for (const auto& output : outputs) {
     auto* proto_result = proto_output->add_results();
 
-    // proto_result->set_image(output.image);
+    image.clear();
+    butil::Base64Encode(output.image, &image);
+
+    proto_result->set_image(image);
     proto_result->set_width(output.width);
     proto_result->set_height(output.height);
     proto_result->set_seed(output.seed);

@@ -19,7 +19,8 @@ limitations under the License.
 #include <glog/logging.h>
 #include <sys/sysinfo.h>
 
-#include "core/framework/dit_model_loader.h"
+#include "core/common/metrics.h"
+#include "util/timer.h"
 #include "worker.h"
 
 namespace xllm {
@@ -70,8 +71,6 @@ bool DiTEngine::init() {
 
 bool DiTEngine::init_model() {
   const std::string& model_path = options_.model_path();
-  auto model_loader = DiTModelLoader(model_path);
-  LOG(INFO) << "Initializing dit model from: " << model_path;
   // init model for each worker in parallel
   // multiple workers, call async init
   std::vector<folly::SemiFuture<bool>> futures;
@@ -80,6 +79,7 @@ bool DiTEngine::init_model() {
   for (auto& worker : workers_) {
     futures.push_back(worker->init_model(model_path));
   }
+
   // wait for all futures to complete
   auto results = folly::collectAll(futures).get();
   LOG(INFO) << "All workers completed model initialization.";
@@ -88,15 +88,14 @@ bool DiTEngine::init_model() {
       return false;
     }
   }
+
   LOG(INFO) << "All workers successfully initialized the model.";
   return true;
 }
 
 DiTForwardOutput DiTEngine::step(std::vector<DiTBatch>& batches) {
-  if (workers_.empty()) {
-    // empty worker, return
-    return {};
-  }
+  CHECK(!workers_.empty());
+
   Timer timer;
   auto forward_inputs = workers_[0]->prepare_inputs(batches[0]);
   COUNTER_ADD(prepare_input_latency_seconds, timer.elapsed_seconds());
@@ -106,14 +105,16 @@ DiTForwardOutput DiTEngine::step(std::vector<DiTBatch>& batches) {
   for (auto& worker : workers_) {
     futures.emplace_back(worker->step(forward_inputs));
   }
+
   // wait for the all future to complete
   auto results = folly::collectAll(futures).get();
+
   // return the result from the driver
   auto forward_output = results.front().value();
   DCHECK(forward_output.has_value()) << "Failed to execute model";
+  batches[0].process_forward_output(forward_output.value());
   return forward_output.value();
 }
-void DiTEngine::update_last_step_result(std::vector<DiTBatch>& batch) {}
 
 std::vector<int64_t> DiTEngine::get_active_activation_memory() const {
   // call worker to get active activation memory

@@ -33,21 +33,17 @@ namespace xllm {
 
 class DiTExecutor {
  public:
-  DiTExecutor(DiTModel* model,
-              DiTModelLoader&& model_loader,
-              const runtime::Options& options);
+  DiTExecutor(DiTModel* model, const runtime::Options& options);
 
   ~DiTExecutor() = default;
 
   DiTForwardInput prepare_inputs(DiTBatch& batch);
 
-  torch::Tensor forward(const DiTInputParams& input_params,
-                        const DiTGenerationParams& generation_params);
+  DiTForwardOutput forward(const DiTForwardInput& input);
 
  private:
   // not own
   DiTModel* model_;
-  DiTModelLoader model_loader_;
   runtime::Options options_;
 };
 

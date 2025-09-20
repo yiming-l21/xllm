@@ -24,7 +24,6 @@ limitations under the License.
 #include "dit_worker.h"
 #include "framework/batch/dit_batch.h"
 #include "framework/quant_args.h"
-#include "runtime/engine.h"
 
 namespace xllm {
 
@@ -40,41 +39,13 @@ class DiTEngine {
 
   bool init();
 
-  void update_last_step_result(std::vector<DiTBatch>& batch);
-
   // return the active activation memory
   std::vector<int64_t> get_active_activation_memory() const;
-
-  void get_cache_info(std::vector<uint64_t>& cluster_ids,
-                      std::vector<std::string>& addrs,
-                      std::vector<int64_t>& k_cache_ids,
-                      std::vector<int64_t>& v_cache_ids) {
-    LOG(FATAL) << " get_cache_info is notimplemented!";
-  };
-
-  bool link_cluster(const std::vector<uint64_t>& cluster_ids,
-                    const std::vector<std::string>& addrs,
-                    const std::vector<std::string>& device_ips,
-                    const std::vector<uint16_t>& ports,
-                    const int32_t src_dp_size) {
-    LOG(FATAL) << " link_cluster is notimplemented!";
-  };
-
-  bool unlink_cluster(const std::vector<uint64_t>& cluster_ids,
-                      const std::vector<std::string>& addrs,
-                      const std::vector<std::string>& device_ips,
-                      const std::vector<uint16_t>& ports,
-                      const int32_t dp_size) {
-    LOG(FATAL) << " unlink_cluster is notimplemented!";
-  };
 
  private:
   bool init_model();
   // options
   runtime::Options options_;
-
-  // dtype
-  torch::ScalarType dtype_;
 
   // a list of process groups, with each process group handling a single device
   std::vector<std::unique_ptr<ProcessGroup>> process_groups_;
