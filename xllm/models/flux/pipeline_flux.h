@@ -196,24 +196,24 @@ class FluxPipelineImpl : public torch::nn::Module {
   bool _interrupt = false;
   torch::Device _execution_device = torch::kCPU;
   torch::ScalarType _execution_dtype = torch::kFloat32;
-  ModelArgs model_args_;
   torch::TensorOptions options_;
 
   std::unique_ptr<Tokenizer> tokenizer_;
   std::unique_ptr<Tokenizer> tokenizer_2_;
 
  public:
-  FluxPipelineImpl(const ModelContext& context)
-      : model_args_(context.get_model_args()),
-        options_(context.get_tensor_options()) {
-    vae_scale_factor_ = 1 << (model_args_.vae_block_out_channels().size() - 1);
+  FluxPipelineImpl(const DiTModelContext& context)
+      : options_(context.get_tensor_options()) {
+
+    const auto& model_args = context.get_model_args("vae");
+    vae_scale_factor_ = 1 << (model_args.vae_block_out_channels().size() - 1);
     _execution_device = options_.device();
     _execution_dtype = torch::kBFloat16;
     LOG(INFO) << _execution_device << " is the execution device";
     LOG(INFO) << _execution_dtype << " is the execution dtype";
-    LOG(INFO) << model_args_;
-    vae_shift_factor_ = model_args_.vae_shift_factor();
-    vae_scaling_factor_ = model_args_.vae_scale_factor();
+    LOG(INFO) << model_args;
+    vae_shift_factor_ = model_args.vae_shift_factor();
+    vae_scaling_factor_ = model_args.vae_scale_factor();
     default_sample_size_ = 128;
     tokenizer_max_length_ = 77;  // TODO: get from config file
     LOG(INFO) << "Initializing Flux pipeline...";
@@ -396,7 +396,7 @@ class FluxPipelineImpl : public torch::nn::Module {
         batch_size, adjusted_height / 2, adjusted_width / 2, device, dtype);
     return {packed_latents, latent_image_ids};
   }
-  torch::Tensor forward(const DiTInputParams& input_params,
+  DiTForwardOutput forward(const DiTInputParams& input_params,
                         const DiTGenerationParams& generation_params) {
     torch::Generator generator = torch::Generator();
     torch::manual_seed(generation_params.seed.value_or(42));
@@ -444,7 +444,10 @@ class FluxPipelineImpl : public torch::nn::Module {
         generation_params.max_sequence_length.value_or(
             512)  // max_sequence_length
     );
-    return output.images[0];
+
+    DiTForwardOutput out;
+    out.image = output.images[0];
+    return out;
   }
   torch::Tensor _get_clip_prompt_embeds(
       std::vector<std::string>& prompt,

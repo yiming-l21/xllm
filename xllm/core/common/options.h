@@ -37,6 +37,8 @@ class Options {
  private:
   PROPERTY(std::string, model_path);
 
+  PROPERTY(std::string, model_id);
+
   PROPERTY(std::optional<std::string>, devices);
 
   PROPERTY(std::optional<std::string>, draft_model_path);

@@ -22,7 +22,7 @@ limitations under the License.
 namespace xllm {
 
 DiTExecutor::DiTExecutor(DiTModel* model,
-                         DiTModelLoader&& model_loader,
+                         DiTModelLoader& model_loader,
                          const runtime::Options& options)
     : model_(model), model_loader_(std::move(model_loader)), options_(options) {
   LOG(INFO) << "DiTExecutor created. in dit_executor.cpp";

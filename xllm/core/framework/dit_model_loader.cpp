@@ -686,4 +686,42 @@ std::vector<std::string> DiTModelLoader::get_all_sub_model_names() const {
 bool DiTModelLoader::has_sub_model(const std::string& component_name) const {
   return name_to_loader_.count(component_name) > 0;
 }
+
+std::unordered_map<std::string, ModelArgs> DiTModelLoader::get_model_args() const {
+
+  std::unordered_map<std::string, ModelArgs> map;
+  for(const auto& pair : name_to_loader_)
+    map.insert({pair.first, pair.second->model_args()});
+  }
+
+  return std::move(map);
+}
+
+std::unordered_map<std::string, QuantArgs> DiTModelLoader::get_quant_args() const {
+
+  std::unordered_map<std::string, QuantArgs> map;
+  for(const auto& pair : name_to_loader_)
+    map.insert({pair.first, pair.second->quant_args()});
+  }
+
+  return std::move(map);
+}
+
+std::string DiTModelLoader::get_torch_dtype() const {
+
+  std::string dtype;
+  for(const auto& pair : name_to_loader_)
+    const auto& args = pair.second->model_args();
+
+    const auto& type = args.dtype();
+    if(dtype.empty() && !type.empty()) {
+      dtype = type;
+    } else if (!dtype.empty() && !type.empty() && dtype!=type) {
+      LOG(WARINING)<<" dtype is not equal, dtype="<<dtype<<" type:"<<type;
+    }
+  }
+
+  return std::move(dtype);
+}
+
 }  // namespace xllm

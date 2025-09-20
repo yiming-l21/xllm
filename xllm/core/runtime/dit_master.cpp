@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
-#include <pybind11/pybind11.h>
 
 #include <atomic>
 #include <boost/algorithm/string.hpp>
@@ -29,18 +28,19 @@ limitations under the License.
 
 #include "api_service/call.h"
 #include "common/metrics.h"
-#include "framework/model/model_args.h"
 #include "framework/request/dit_request.h"
 #include "models/model_registry.h"
 #include "runtime/dit_engine.h"
 #include "scheduler/scheduler_factory.h"
+#include "util/device_name_utils.h"
+#include "util/scope_guard.h"
+#include "util/timer.h"
+
 #if defined(USE_NPU)
 #include "torch_npu/csrc/core/npu/NPUCachingAllocator.h"
 #include "torch_npu/csrc/core/npu/THNPUCachingHostAllocator.h"
 #endif
-#include "util/device_name_utils.h"
-#include "util/scope_guard.h"
-#include "util/timer.h"
+
 
 namespace xllm {
 DiTMaster::DiTMaster(const Options& options)
@@ -53,13 +53,15 @@ DiTMaster::DiTMaster(const Options& options)
             << DeviceNameUtils::to_string(devices);
 
   runtime::Options eng_options;
-  eng_options.model_path(options.model_path()).devices(devices);
+  eng_options.model_path(options.model_path())
+             .model_id(options.model_id())
+             .devices(devices);
 
   engine_ = std::make_unique<DiTEngine>(eng_options);
   CHECK(engine_->init());
 
   DiTScheduler::Options scheduler_options;
-  scheduler_options.max_request_per_batch(options.max_seqs_per_batch());
+  scheduler_options.max_request_per_batch(options.max_requests_per_batch());
 
   scheduler_ = create_dit_scheduler(engine_.get(), scheduler_options);
   LOG(INFO) << "created dit scheduler in DiTMaster.";
@@ -76,7 +78,6 @@ DiTMaster::~DiTMaster() {
     loop_thread_.join();
   }
 
-  // torch::cuda::empty_cache();
 #if defined(USE_NPU)
   c10_npu::NPUCachingAllocator::emptyCache();
 #elif defined(USE_MLU)
@@ -84,21 +85,7 @@ DiTMaster::~DiTMaster() {
 #endif
 }
 
-void DiTMaster::handle_batch_request(std::vector<DiTRequestParams> sps,
-                                     BatchDiTOutputCallback callback) {
-  const size_t num_requests = sps.size();
-  scheduler_->incr_pending_requests(num_requests);
-  for (size_t i = 0; i < num_requests; ++i) {
-    handle_request(std::move(sps[i]),
-                   std::nullopt,
-                   [i, callback](const DiTRequestOutput& output) {
-                     output.log_request_status();
-                     return callback(i, output);
-                   });
-  }
-}
-
-void DiTMaster::handle_request(DiTRequestParams sp,
+void DiTMaster::handle_request(DiTRequestParams params,
                                std::optional<Call*> call,
                                DiTOutputCallback callback) {
   scheduler_->incr_pending_requests(1);
@@ -109,7 +96,7 @@ void DiTMaster::handle_request(DiTRequestParams sp,
 
   // add into the queue
   threadpool_->schedule(
-      [this, sp = std::move(sp), callback = std::move(cb), call]() mutable {
+      [this, params = std::move(params), callback = std::move(cb), call]() mutable {
         AUTO_COUNTER(request_handling_latency_seconds_completion);
 
         // remove the pending request after scheduling
@@ -117,14 +104,14 @@ void DiTMaster::handle_request(DiTRequestParams sp,
 
         Timer timer;
         // verify the prompt
-        if (!sp.verify_params(callback)) {
+        if (!params.verify_params(callback)) {
           return;
         }
         DiTRequestState dit_state = DiTRequestState(
-            sp.input_params, sp.generation_params, callback, nullptr, call);
-        auto request = std::make_shared<DiTRequest>(sp.request_id,
-                                                    sp.x_request_id,
-                                                    sp.x_request_time,
+            params.input_params, params.generation_params, callback, nullptr, call);
+        auto request = std::make_shared<DiTRequest>(params.request_id,
+                                                    params.x_request_id,
+                                                    params.x_request_time,
                                                     std::move(dit_state));
 
         if (!scheduler_->add_request(request)) {
@@ -132,6 +119,20 @@ void DiTMaster::handle_request(DiTRequestParams sp,
                               "No available resources to schedule request");
         }
       });
+}
+
+void DiTMaster::handle_batch_request(std::vector<DiTRequestParams> params_vec,
+                                     BatchDiTOutputCallback callback) {
+  const size_t num_requests = params_vec.size();
+  scheduler_->incr_pending_requests(num_requests);
+  for (size_t i = 0; i < num_requests; ++i) {
+    handle_request(std::move(params_vec[i]),
+                   std::nullopt,
+                   [i, callback](const DiTRequestOutput& output) {
+                     output.log_request_status();
+                     return callback(i, output);
+                   });
+  }
 }
 
 void DiTMaster::run() {

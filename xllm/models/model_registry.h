@@ -24,6 +24,7 @@ limitations under the License.
 #include "core/framework/model/causal_vlm.h"
 #include "core/framework/model/dit_model.h"
 #include "core/framework/model/embedding_lm.h"
+#include "core/framework/dit_model_context.h"
 #include "core/framework/model_context.h"
 #include "core/framework/parallel_state.h"
 #include "core/framework/tokenizer/tokenizer_args.h"
@@ -44,7 +45,7 @@ using EmbeddingLMFactory =
     std::function<std::unique_ptr<EmbeddingLM>(const ModelContext& context)>;
 
 using DiTModelFactory =
-    std::function<std::unique_ptr<DiTModel>(const ModelContext& context)>;
+    std::function<std::unique_ptr<DiTModel>(const DiTModelContext& context)>;
 
 using InputProcessorFactory =
     std::function<std::unique_ptr<InputProcessor>(const ModelArgs& args)>;
@@ -137,7 +138,7 @@ std::unique_ptr<CausalVLM> create_vlm_model(const ModelContext& context);
 std::unique_ptr<EmbeddingLM> create_embeddinglm_model(
     const ModelContext& context);
 
-std::unique_ptr<DiTModel> create_dit_model(const ModelContext& context);
+std::unique_ptr<DiTModel> create_dit_model(const DiTModelContext& context);
 
 // Macro to register a model with the ModelRegistry
 #define REGISTER_CAUSAL_MODEL_WITH_VARNAME(VarName, ModelType, ModelClass) \

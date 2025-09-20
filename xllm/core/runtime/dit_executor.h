@@ -34,7 +34,7 @@ namespace xllm {
 class DiTExecutor {
  public:
   DiTExecutor(DiTModel* model,
-              DiTModelLoader&& model_loader,
+              DiTModelLoader& model_loader,
               const runtime::Options& options);
 
   ~DiTExecutor() = default;

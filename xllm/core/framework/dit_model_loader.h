@@ -60,6 +60,7 @@ class DiTFolderLoader {
   // models weights tensors
   std::vector<std::unique_ptr<StateDict>> state_dicts_;
 };
+
 class DiTModelLoader {
  public:
   explicit DiTModelLoader(const std::string& model_root_path);
@@ -85,6 +86,10 @@ class DiTModelLoader {
   const std::vector<std::string>& component_names() const {
     return component_names_;
   }
+
+  std::unordered_map<std::string, ModelArgs> get_model_args() const;
+  std::unordered_map<std::string, QuantArgs> get_quant_args() const;
+  std::string get_torch_dtype() const;
 
  private:
   void update_model_args(const ModelArgs& args);
