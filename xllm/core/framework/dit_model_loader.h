@@ -29,7 +29,8 @@ namespace xllm {
 class DiTFolderLoader {
  public:
   DiTFolderLoader(const std::string& folder_path,
-                  const std::string& component_name);
+                  const std::string& component_name,
+                  const std::string& model_type);
 
   std::unique_ptr<Tokenizer> tokenizer() const;
   const ModelArgs& model_args() const { return args_; }
@@ -43,7 +44,6 @@ class DiTFolderLoader {
   bool load_model_args(const std::string& model_weights_path);
   bool load_tokenizer_args(const std::string& model_weights_path);
 
-  void debug_info() const;
   // model args
   ModelArgs args_;
   // quantization args
@@ -53,6 +53,8 @@ class DiTFolderLoader {
 
   std::string model_weights_path_;
 
+  std::string model_type_;
+
   std::string component_name_;
 
   // sorted model weights files
@@ -60,46 +62,26 @@ class DiTFolderLoader {
   // models weights tensors
   std::vector<std::unique_ptr<StateDict>> state_dicts_;
 };
+
 class DiTModelLoader {
  public:
   explicit DiTModelLoader(const std::string& model_root_path);
 
-  const DiTFolderLoader* get_sub_model_loader_by_name(
-      const std::string& component_name) const;
+  std::unique_ptr<DiTFolderLoader> take_component_loader(
+      const std::string& component);
 
-  const DiTFolderLoader* get_sub_model_loader_by_folder(
-      const std::string& component_folder) const;
-
-  std::unique_ptr<DiTFolderLoader> take_sub_model_loader_by_name(
-      const std::string& component_name);
-
-  std::unique_ptr<DiTFolderLoader> take_sub_model_loader_by_folder(
-      const std::string& component_folder);
-
-  std::vector<std::string> get_all_sub_model_names() const;
-
-  bool has_sub_model(const std::string& component_name) const;
+  bool has_component(const std::string& component) const;
   std::string model_root_path() const { return model_root_path_; }
-  const ModelArgs& model_args() const { return args_; }
 
-  const std::vector<std::string>& component_names() const {
-    return component_names_;
-  }
+  std::unordered_map<std::string, ModelArgs> get_model_args() const;
+  std::unordered_map<std::string, QuantArgs> get_quant_args() const;
+
+  std::string get_torch_dtype() const;
 
  private:
-  void update_model_args(const ModelArgs& args);
-
-  ModelArgs args_;
-
-  std::unordered_map<std::string, bool> arg_status_;
-
   std::string model_root_path_;
 
   std::unordered_map<std::string, std::unique_ptr<DiTFolderLoader>>
       name_to_loader_;
-
-  std::unordered_map<std::string, std::string> name_to_folder_;
-
-  std::vector<std::string> component_names_;
 };
 }  // namespace xllm

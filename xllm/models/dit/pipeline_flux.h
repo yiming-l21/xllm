@@ -196,40 +196,45 @@ class FluxPipelineImpl : public torch::nn::Module {
   bool _interrupt = false;
   torch::Device _execution_device = torch::kCPU;
   torch::ScalarType _execution_dtype = torch::kFloat32;
-  ModelArgs model_args_;
   torch::TensorOptions options_;
 
   std::unique_ptr<Tokenizer> tokenizer_;
   std::unique_ptr<Tokenizer> tokenizer_2_;
 
  public:
-  FluxPipelineImpl(const ModelContext& context)
-      : model_args_(context.get_model_args()),
-        options_(context.get_tensor_options()) {
-    vae_scale_factor_ = 1 << (model_args_.vae_block_out_channels().size() - 1);
+  FluxPipelineImpl(const DiTModelContext& context)
+      : options_(context.get_tensor_options()) {
+    const auto& model_args = context.get_model_args("vae");
+    vae_scale_factor_ = 1 << (model_args.vae_block_out_channels().size() - 1);
     _execution_device = options_.device();
     _execution_dtype = torch::kBFloat16;
     LOG(INFO) << _execution_device << " is the execution device";
     LOG(INFO) << _execution_dtype << " is the execution dtype";
-    LOG(INFO) << model_args_;
-    vae_shift_factor_ = model_args_.vae_shift_factor();
-    vae_scaling_factor_ = model_args_.vae_scale_factor();
+    vae_shift_factor_ = model_args.vae_shift_factor();
+    vae_scaling_factor_ = model_args.vae_scale_factor();
     default_sample_size_ = 128;
     tokenizer_max_length_ = 77;  // TODO: get from config file
     LOG(INFO) << "Initializing Flux pipeline...";
     vae_image_processor_ = VAEImageProcessor(
         true, vae_scale_factor_, 4, "lanczos", -1, true, false, false, false);
     LOG(INFO) << "VAE image processor initialized.";
-    vae_ = VAE(context, _execution_device, _execution_dtype);
+    vae_ = VAE(
+        context.get_model_context("vae"), _execution_device, _execution_dtype);
     LOG(INFO) << "VAE initialized.";
-    transformer_ = FluxDiTModel(context, _execution_device, _execution_dtype);
+    transformer_ = FluxDiTModel(context.get_model_context("transformer"),
+                                _execution_device,
+                                _execution_dtype);
     LOG(INFO) << "DiT transformer initialized.";
-    t5_ = T5EncoderModel(context, _execution_device, _execution_dtype);
+    t5_ = T5EncoderModel(context.get_model_context("text_encoder_2"),
+                         _execution_device,
+                         _execution_dtype);
     LOG(INFO) << "T5 initialized.";
-    clip_text_model_ =
-        CLIPTextModel(context, _execution_device, _execution_dtype);
+    clip_text_model_ = CLIPTextModel(context.get_model_context("text_encoder"),
+                                     _execution_device,
+                                     _execution_dtype);
     LOG(INFO) << "CLIP text model initialized.";
-    scheduler_ = FlowMatchEulerDiscreteScheduler(context);
+    scheduler_ =
+        FlowMatchEulerDiscreteScheduler(context.get_model_context("scheduler"));
     LOG(INFO) << "Flux pipeline initialized.";
     // register modules
     register_module("vae", vae_);
@@ -396,8 +401,10 @@ class FluxPipelineImpl : public torch::nn::Module {
         batch_size, adjusted_height / 2, adjusted_width / 2, device, dtype);
     return {packed_latents, latent_image_ids};
   }
-  torch::Tensor forward(const DiTInputParams& input_params,
-                        const DiTGenerationParams& generation_params) {
+  DiTForwardOutput forward(const DiTForwardInput& input) {
+    const auto& input_params = input.input_params;
+    const auto& generation_params = input.generation_params;
+
     torch::Generator generator = torch::Generator();
     torch::manual_seed(generation_params.seed.value_or(42));
     std::vector<torch::Generator> generators_vec;
@@ -444,7 +451,10 @@ class FluxPipelineImpl : public torch::nn::Module {
         generation_params.max_sequence_length.value_or(
             512)  // max_sequence_length
     );
-    return output.images[0];
+
+    DiTForwardOutput out;
+    out.tensor = output.images[0];
+    return out;
   }
   torch::Tensor _get_clip_prompt_embeds(
       std::vector<std::string>& prompt,
@@ -729,19 +739,15 @@ class FluxPipelineImpl : public torch::nn::Module {
   }
 
   void load_model(std::unique_ptr<DiTModelLoader> loader) {
-    LOG(INFO) << "FluxPipeline loading model...";
-    LOG(INFO) << "Loading Flux model from: " << loader->model_root_path()
-              << loader->component_names();
+    LOG(INFO) << "FluxPipeline loading model from" << loader->model_root_path();
+
     std::string model_path = loader->model_root_path();
-    auto transformer_loader =
-        loader->take_sub_model_loader_by_folder("transformer");
-    auto vae_loader = loader->take_sub_model_loader_by_folder("vae");
-    auto t5_loader = loader->take_sub_model_loader_by_folder("text_encoder_2");
-    auto clip_loader = loader->take_sub_model_loader_by_folder("text_encoder");
-    auto tokenizer_loader =
-        loader->take_sub_model_loader_by_folder("tokenizer");
-    auto tokenizer_2_loader =
-        loader->take_sub_model_loader_by_folder("tokenizer_2");
+    auto transformer_loader = loader->take_component_loader("transformer");
+    auto vae_loader = loader->take_component_loader("vae");
+    auto t5_loader = loader->take_component_loader("text_encoder_2");
+    auto clip_loader = loader->take_component_loader("text_encoder");
+    auto tokenizer_loader = loader->take_component_loader("tokenizer");
+    auto tokenizer_2_loader = loader->take_component_loader("tokenizer_2");
     LOG(INFO)
         << "Flux model components loaded, start to load weights to sub models";
     transformer_->load_model(std::move(transformer_loader));

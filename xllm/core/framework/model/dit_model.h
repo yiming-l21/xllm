@@ -22,15 +22,14 @@ limitations under the License.
 #include <vector>
 
 #include "core/framework/dit_model_loader.h"
-#include "core/framework/request/dit_request_state.h"
+#include "core/runtime/dit_forward_params.h"
 namespace xllm {
 
 class DiTModel : public torch::nn::Module {
  public:
   ~DiTModel() override = default;
 
-  virtual torch::Tensor forward(const DiTInputParams& input_params,
-                                const DiTGenerationParams& gen_params) = 0;
+  virtual DiTForwardOutput forward(const DiTForwardInput& input) = 0;
   virtual torch::Device device() const = 0;
   virtual const torch::TensorOptions& options() const = 0;
   virtual void load_model(std::unique_ptr<DiTModelLoader> loader) = 0;
@@ -40,17 +39,13 @@ template <typename Model>
 class DiTModelImpl : public DiTModel {
  public:
   DiTModelImpl(Model model, const torch::TensorOptions& options)
-      : model_(std::move(model)), options_(options) {
-    LOG(INFO) << "DiTModelImpl created.";
-  }
-  torch::Tensor forward(const DiTInputParams& input_params,
-                        const DiTGenerationParams& gen_params) override {
-    return model_->forward(input_params, gen_params);
+      : model_(std::move(model)), options_(options) {}
+  DiTForwardOutput forward(const DiTForwardInput& input) override {
+    return model_->forward(input);
   }
   torch::Device device() const override { return options_.device(); }
   const torch::TensorOptions& options() const override { return options_; }
   void load_model(std::unique_ptr<DiTModelLoader> loader) override {
-    LOG(INFO) << "DiTModel loading model..., in dit_model.h";
     model_->load_model(std::move(loader));
   }
 

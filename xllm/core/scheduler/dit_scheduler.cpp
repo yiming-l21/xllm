@@ -36,14 +36,12 @@ constexpr size_t kRequestQueueSize = 100;
 }  // namespace
 
 void DiTAsyncResponseProcessor::process_completed_request(
-    std::shared_ptr<DiTRequest> request,
-    const DiTForwardOutput& output) {
-  response_threadpool_.schedule(
-      [request = std::move(request), output = std::move(output)]() {
-        LOG(INFO) << "request_id: " << request->request_id();
+    std::shared_ptr<DiTRequest> request) {
+  response_threadpool_.schedule([request = std::move(request)]() {
+    LOG(INFO) << "request_id: " << request->request_id();
 
-        request->state().output_func()(request->generate_output(output));
-      });
+    request->state().output_func()(request->generate_output());
+  });
 }
 
 void DiTAsyncResponseProcessor::process_failed_request(
@@ -89,7 +87,7 @@ void DiTDynamicBatchScheduler::step(const absl::Duration& timeout) {
   auto output = engine_->step(batches);
 
   // process request output in batch
-  process_batch_output(output);
+  process_batch_output();
 }
 
 void DiTDynamicBatchScheduler::generate() {}
@@ -150,10 +148,9 @@ std::vector<DiTBatch> DiTDynamicBatchScheduler::schedule_request(
   return batches;
 }
 
-void DiTDynamicBatchScheduler::process_batch_output(
-    const DiTForwardOutput& output) {
+void DiTDynamicBatchScheduler::process_batch_output() {
   for (auto& request : running_requests_) {
-    response_handler_->process_completed_request(request, output);
+    response_handler_->process_completed_request(request);
   }
 
   running_requests_.clear();

@@ -21,21 +21,15 @@ limitations under the License.
 
 namespace xllm {
 
-DiTExecutor::DiTExecutor(DiTModel* model,
-                         DiTModelLoader&& model_loader,
-                         const runtime::Options& options)
-    : model_(model), model_loader_(std::move(model_loader)), options_(options) {
-  LOG(INFO) << "DiTExecutor created. in dit_executor.cpp";
-}
+DiTExecutor::DiTExecutor(DiTModel* model, const runtime::Options& options)
+    : model_(model), options_(options) {}
 
 DiTForwardInput DiTExecutor::prepare_inputs(DiTBatch& batch) {
   return batch.prepare_forward_input();
 }
 
-torch::Tensor DiTExecutor::forward(
-    const DiTInputParams& input_params,
-    const DiTGenerationParams& generation_params) {
-  return model_->forward(input_params, generation_params);
+DiTForwardOutput DiTExecutor::forward(const DiTForwardInput& input) {
+  return model_->forward(input);
 }
 
 }  // namespace xllm

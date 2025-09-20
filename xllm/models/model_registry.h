@@ -20,6 +20,7 @@ limitations under the License.
 #include <string>
 #include <unordered_map>
 
+#include "core/framework/dit_model_context.h"
 #include "core/framework/model/causal_lm.h"
 #include "core/framework/model/causal_vlm.h"
 #include "core/framework/model/dit_model.h"
@@ -44,7 +45,7 @@ using EmbeddingLMFactory =
     std::function<std::unique_ptr<EmbeddingLM>(const ModelContext& context)>;
 
 using DiTModelFactory =
-    std::function<std::unique_ptr<DiTModel>(const ModelContext& context)>;
+    std::function<std::unique_ptr<DiTModel>(const DiTModelContext& context)>;
 
 using InputProcessorFactory =
     std::function<std::unique_ptr<InputProcessor>(const ModelArgs& args)>;
@@ -137,7 +138,7 @@ std::unique_ptr<CausalVLM> create_vlm_model(const ModelContext& context);
 std::unique_ptr<EmbeddingLM> create_embeddinglm_model(
     const ModelContext& context);
 
-std::unique_ptr<DiTModel> create_dit_model(const ModelContext& context);
+std::unique_ptr<DiTModel> create_dit_model(const DiTModelContext& context);
 
 // Macro to register a model with the ModelRegistry
 #define REGISTER_CAUSAL_MODEL_WITH_VARNAME(VarName, ModelType, ModelClass) \
@@ -189,7 +190,7 @@ std::unique_ptr<DiTModel> create_dit_model(const ModelContext& context);
 #define REGISTER_DIT_MODEL_WITH_VARNAME(VarName, ModelType, ModelClass) \
   const bool VarName##_registered = []() {                              \
     ModelRegistry::register_dit_model_factory(                          \
-        #ModelType, [](const ModelContext& context) {                   \
+        #ModelType, [](const DiTModelContext& context) {                \
           ModelClass model(context);                                    \
           model->eval();                                                \
           return std::make_unique<xllm::DiTModelImpl<ModelClass>>(      \

@@ -23,9 +23,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "common/options.h"
-#include "common/rate_limiter.h"
-#include "framework/request/dit_request_output.h"
 #include "framework/request/dit_request_params.h"
 #include "runtime/master.h"
 #include "scheduler/dit_scheduler.h"
@@ -40,12 +37,12 @@ class DiTMaster : public Master {
   ~DiTMaster();
 
   // handle a request, the engine will execute the request asynchronously
-  void handle_request(DiTRequestParams sp,
+  void handle_request(DiTRequestParams params,
                       std::optional<Call*> call,
                       DiTOutputCallback callback);
 
   // batch generation
-  void handle_batch_request(std::vector<DiTRequestParams> sp,
+  void handle_batch_request(std::vector<DiTRequestParams> params_vec,
                             BatchDiTOutputCallback callback);
 
   // start running loop
@@ -59,9 +56,6 @@ class DiTMaster : public Master {
   std::unique_ptr<DiTEngine> engine_;
 
   std::unique_ptr<DiTScheduler> scheduler_;
-
-  // model args
-  ModelArgs model_args_;
 
   // thread pool for handling requests
   std::unique_ptr<ThreadPool> threadpool_;

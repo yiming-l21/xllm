@@ -29,9 +29,10 @@ namespace xllm {
 struct DiTForwardInput {
   DiTForwardInput to(const torch::Device& device,
                      torch::ScalarType dtype) const {
-    DiTForwardInput inputs;
-    inputs.input_params = input_params.to(device, dtype);
-    return inputs;
+    DiTForwardInput input;
+    input.input_params = input_params.to(device, dtype);
+    input.generation_params = generation_params;
+    return input;
   }
 
   DiTInputParams input_params;
@@ -40,8 +41,15 @@ struct DiTForwardInput {
 
 // dit related forward output params
 struct DiTForwardOutput {
-  // generated image
-  torch::Tensor image;
+  // generated tensor
+  torch::Tensor tensor;
+
+  DiTForwardOutput slice(int offset, int count) const {
+    DiTForwardOutput output;
+    output.tensor = tensor.slice(0, offset, offset + count).clone();
+
+    return output;
+  }
 };
 
 }  // namespace xllm
