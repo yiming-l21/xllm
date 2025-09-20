@@ -3,6 +3,7 @@
 #include <torch/torch.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -425,8 +426,8 @@ class FluxPipelineImpl : public torch::nn::Module {
         negative_prompt_input,                               // negative_prompt
         negative_prompt_2_input,                       // negative_prompt_2
         generation_params.true_cfg_scale.value_or(1),  // cfg scale
-        std::make_optional(generation_params.height),  // height
-        std::make_optional(generation_params.width),   // width
+        std::make_optional(1440),                      // height
+        std::make_optional(1440),                      // width
         generation_params.num_inference_steps.value_or(
             28),                                         // num_inference_steps
         std::nullopt,                                    // sigmas
@@ -441,8 +442,7 @@ class FluxPipelineImpl : public torch::nn::Module {
         input_params
             .negative_pooled_prompt_embeds,  // negative_pooled_prompt_embeds
         "pil",                               // output_type
-        generation_params.max_sequence_length.value_or(
-            512)  // max_sequence_length
+        512                                  // max_sequence_length
     );
     return output.images[0];
   }
@@ -568,6 +568,7 @@ class FluxPipelineImpl : public torch::nn::Module {
       std::optional<torch::Tensor> negative_pooled_prompt_embeds = std::nullopt,
       std::string output_type = "pil",
       int64_t max_sequence_length = 512) {
+    auto start = std::chrono::high_resolution_clock::now();
     torch::NoGradGuard no_grad;
     int64_t actual_height = height.has_value()
                                 ? height.value()
@@ -673,7 +674,17 @@ class FluxPipelineImpl : public torch::nn::Module {
     // RoPE outplace computation
     std::optional<torch::Tensor> image_rotary_emb_opt = std::nullopt;
     std::optional<torch::Tensor> image_rotary_emb_opt_neg = std::nullopt;
+    auto end = std::chrono::high_resolution_clock::now();
+    LOG(INFO) << "Preparation done in "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                       start)
+                     .count()
+              << " ms";
+    auto new_start = std::chrono::high_resolution_clock::now();
+
     for (int64_t i = 0; i < timesteps.numel(); ++i) {
+      auto diter_start = std::chrono::high_resolution_clock::now();
+      LOG(INFO) << "timestep " << i << " / " << timesteps.numel();
       if (_interrupt) break;
 
       torch::Tensor t = timesteps[i].unsqueeze(0);
@@ -725,12 +736,24 @@ class FluxPipelineImpl : public torch::nn::Module {
           prepared_latents.dtype() != latents.value().dtype()) {
         prepared_latents = prepared_latents.to(latents.value().dtype());
       }
+      auto diter_end = std::chrono::high_resolution_clock::now();
+      LOG(INFO) << "Diter step done in "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                       diter_end - diter_start)
+                       .count()
+                << " ms";
     }
-
+    auto full_end = std::chrono::high_resolution_clock::now();
+    LOG(INFO) << "dit generation done in "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     full_end - new_start)
+                     .count()
+              << " ms";
     torch::Tensor image;
     if (output_type == "latent") {
       image = prepared_latents;
     } else {
+      auto vae_start = std::chrono::high_resolution_clock::now();
       // Unpack latents
       torch::Tensor unpacked_latents = _unpack_latents(
           prepared_latents, actual_height, actual_width, vae_scale_factor_);
@@ -738,8 +761,25 @@ class FluxPipelineImpl : public torch::nn::Module {
           (unpacked_latents / vae_scaling_factor_) + vae_shift_factor_;
       image = vae_->decode(unpacked_latents).sample;
       image = vae_image_processor_->postprocess(image, output_type);
+      auto vae_end = std::chrono::high_resolution_clock::now();
+      LOG(INFO) << "VAE decode done in "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                       vae_end - vae_start)
+                       .count()
+                << " ms";
     }
-
+    full_end = std::chrono::high_resolution_clock::now();
+    LOG(INFO) << "Full forward done in "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     full_end - start)
+                     .count()
+              << " ms";
+    auto bytes = torch::pickle_save(image.cpu());  // 转成二进制 pickle 数据
+    std::ofstream fout(
+        "/export/home/liuyiming54/precision_test/flux/xllm/final_image.pkl",
+        std::ios::out | std::ios::binary);
+    fout.write(bytes.data(), bytes.size());
+    fout.close();
     return FluxPipelineOutput{{image}};
   }
 
