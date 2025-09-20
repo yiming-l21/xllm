@@ -425,8 +425,8 @@ class FluxPipelineImpl : public torch::nn::Module {
         negative_prompt_input,                               // negative_prompt
         negative_prompt_2_input,                       // negative_prompt_2
         generation_params.true_cfg_scale.value_or(1),  // cfg scale
-        std::make_optional(generation_params.height),  // height
-        std::make_optional(generation_params.width),   // width
+        std::make_optional(1440),                      // height
+        std::make_optional(1440),                      // width
         generation_params.num_inference_steps.value_or(
             28),                                         // num_inference_steps
         std::nullopt,                                    // sigmas
@@ -670,6 +670,15 @@ class FluxPipelineImpl : public torch::nn::Module {
     scheduler_->set_begin_index(0);
     torch::Tensor timestep =
         torch::empty({prepared_latents.size(0)}, prepared_latents.options());
+
+    torch::Tensor image_rotary_embed_neg, image_rotary_embed;
+    image_rotary_embed =
+        transformer_->rotary_pos_emb(latent_image_ids, text_ids);
+    if (do_true_cfg) {
+      image_rotary_embed_neg =
+          transformer_->rotary_pos_emb(latent_image_ids, negative_text_ids);
+    }
+
     for (int64_t i = 0; i < timesteps.numel(); ++i) {
       if (_interrupt) break;
 
@@ -682,8 +691,7 @@ class FluxPipelineImpl : public torch::nn::Module {
                                                        encoded_prompt_embeds,
                                                        encoded_pooled_embeds,
                                                        timestep,
-                                                       latent_image_ids,
-                                                       text_ids,
+                                                       image_rotary_embed,
                                                        guidance,
                                                        0);
       if (do_true_cfg) {
@@ -692,8 +700,7 @@ class FluxPipelineImpl : public torch::nn::Module {
                                   negative_encoded_embeds,
                                   negative_pooled_embeds,
                                   timestep,
-                                  latent_image_ids,
-                                  negative_text_ids,
+                                  image_rotary_embed_neg,
                                   guidance,
                                   0);
         noise_pred =
