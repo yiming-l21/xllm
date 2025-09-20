@@ -16,10 +16,40 @@
 #include "models/model_registry.h"
 #include "processors/input_processor.h"
 #include "processors/pywarpper_image_processor.h"
+
+#if defined(USE_NPU)
+
+namespace at_npu {
+namespace native {
+at::Tensor npu_format_cast(const at::Tensor& self, int64_t acl_format);
+}
+}  // namespace at_npu
+constexpr int64_t ACL_FORMAT_NZ = 29;
+#endif
+
 // DiT model compatible with huggingface weights
 //   ref to:
 //   https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_flux.py
 namespace xllm::hf {
+
+inline void NpuFormatCastAllLinear(torch::nn::Module& root) {
+#if defined(USE_NPU)
+  for (const auto& sub : root.modules(/*include_self=*/false)) {
+    if (auto* lin = dynamic_cast<torch::nn::LinearImpl*>(sub.get())) {
+      auto& W = lin->weight;
+      if (W.defined()) {
+        auto requires_grad = W.requires_grad();
+        at::Tensor casted =
+            at_npu::native::npu_format_cast(W, ACL_FORMAT_FRACTAL_NZ);
+        casted.set_requires_grad(requires_grad);
+        torch::NoGradGuard ng;
+        W.set_data(casted);
+      }
+    }
+  }
+#endif
+}
+
 inline torch::Tensor apply_rotary_emb(const torch::Tensor& x,
                                       const torch::Tensor& freqs_cis) {
   // assume freqs_cis is [2, S, D]，[0] is cos，[1] is sin
@@ -1854,6 +1884,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
       const torch::Tensor& guidance,
       int64_t step_idx = 0) {
     torch::Tensor image_rotary_emb;
+    LOG(INFO) << "step_idx: " << step_idx;
     if (!image_rotary_emb_opt.has_value()) {
       torch::Tensor ids = torch::cat(
           {txt_ids.to(device_).to(dtype_), img_ids.to(device_).to(dtype_)}, 0);
@@ -2054,6 +2085,7 @@ class FluxDiTModelImpl : public torch::nn::Module {
   }
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     flux_transformer_2d_model_->load_model(std::move(loader));
+    NpuFormatCastAllLinear(*this);
   }
   int64_t in_channels() { return flux_transformer_2d_model_->in_channels(); }
   bool guidance_embeds() {
