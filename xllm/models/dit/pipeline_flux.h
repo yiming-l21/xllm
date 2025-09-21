@@ -568,6 +568,7 @@ class FluxPipelineImpl : public torch::nn::Module {
       std::optional<torch::Tensor> negative_pooled_prompt_embeds = std::nullopt,
       std::string output_type = "pil",
       int64_t max_sequence_length = 512) {
+    transformer_->enable_cache(num_inference_steps);
     torch::NoGradGuard no_grad;
     int64_t actual_height = height.has_value()
                                 ? height.value()

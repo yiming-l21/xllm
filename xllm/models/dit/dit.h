@@ -1376,13 +1376,48 @@ class FluxPosEmbedImpl : public torch::nn::Module {
  private:
   int64_t theta_;
   std::vector<int64_t> axes_dim_;
+  bool use_cache_ = false;
+  torch::Tensor freqs_cos_cache_;
+  torch::Tensor freqs_sin_cache_;
+  int cur_step_ = 0;
+  int steps_count_ = 0;
 
  public:
   FluxPosEmbedImpl(int64_t theta, std::vector<int64_t> axes_dim) {
     theta_ = theta;
     axes_dim_ = axes_dim;
   }
+
   std::pair<torch::Tensor, torch::Tensor> forward(const torch::Tensor& ids) {
+    if (use_cache_) {
+      if (cur_step_ == 0) {
+        LOG(INFO) << "Recompute pos embed cache";
+        auto [cos, sin] = _forward(ids);
+        freqs_cos_cache_ = std::move(cos);
+        freqs_sin_cache_ = std::move(sin);
+      }
+      _counter();
+      return {freqs_cos_cache_, freqs_sin_cache_};
+    } else {
+      return _forward(ids);
+    }
+  }
+
+  void enable_cache(int steps_count) {
+    use_cache_ = true;
+    steps_count_ = steps_count;
+    cur_step_ = 0;
+  }
+
+ private:
+  void _counter() {
+    cur_step_ += 1;
+    if (cur_step_ >= steps_count_) {
+      cur_step_ = 0;
+    }
+  }
+
+  std::pair<torch::Tensor, torch::Tensor> _forward(const torch::Tensor& ids) {
     int64_t n_axes = ids.size(-1);
     std::vector<torch::Tensor> cos_out, sin_out;
     auto pos = ids.to(torch::kFloat32);
@@ -1843,6 +1878,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
                                      patch_size * patch_size * out_channels_)
                 .bias(true)));
   }
+
   torch::Tensor forward(const torch::Tensor& hidden_states_input,
                         const torch::Tensor& encoder_hidden_states_input,
                         const torch::Tensor& pooled_projections,
@@ -1967,6 +2003,8 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
     }
   }
 
+  void enable_cache(int steps_count) { pos_embed_->enable_cache(steps_count); }
+
  private:
   int64_t out_channels_;
   int64_t inner_dim_;
@@ -2006,6 +2044,11 @@ class FluxDiTModelImpl : public torch::nn::Module {
                                dtype_));
     flux_transformer_2d_model_->to(dtype_);
   }
+
+  void enable_cache(int steps_count) {
+    flux_transformer_2d_model_->enable_cache(steps_count);
+  }
+
   torch::Tensor forward(const torch::Tensor& hidden_states_input,
                         const torch::Tensor& encoder_hidden_states_input,
                         const torch::Tensor& pooled_projections,
@@ -2042,36 +2085,13 @@ class FluxDiTModelImpl : public torch::nn::Module {
 
     return latent_image_ids;
   }
-  torch::Tensor forward(const torch::Tensor& tokens,
-                        const torch::Tensor& positions,
-                        std::vector<KVCache>& kv_caches,
-                        const ModelInputParams& input_params) {
-    int seed = 42;
-    torch::manual_seed(seed);
-    auto hidden_states = torch::randn({1, 8100, 64}, device_);
-    torch::manual_seed(seed);
-    auto encoder_hidden_states = torch::randn({1, 512, 4096}, device_);
-    torch::manual_seed(seed);
-    auto pooled_projections = torch::randn({1, 768}, device_);
-    auto txt_ids = torch::zeros({512, 3}, device_);
-    auto img_ids = _prepare_latent_image_ids(1, 90, 90, device_, dtype_);
-    torch::Tensor timestep =
-        torch::tensor({1.0f}, torch::dtype(dtype_).device(device_));
-    torch::Tensor guidance =
-        torch::tensor({3.5f}, torch::dtype(dtype_).device(device_));
-    auto output = forward(hidden_states,
-                          encoder_hidden_states,
-                          pooled_projections,
-                          timestep,
-                          img_ids,
-                          txt_ids,
-                          guidance);
-    return output;
-  }
+
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     flux_transformer_2d_model_->load_model(std::move(loader));
   }
+
   int64_t in_channels() { return flux_transformer_2d_model_->in_channels(); }
+
   bool guidance_embeds() {
     return flux_transformer_2d_model_->guidance_embeds();
   }
