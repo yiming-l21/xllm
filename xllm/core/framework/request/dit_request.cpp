@@ -90,12 +90,9 @@ void DiTRequest::log_statistic(double total_latency) {
             << "total_latency: " << total_latency * 1000 << "ms";
 }
 
-int DiTRequest::handle_forward_output(int offset,
-                                      const DiTForwardOutput& output) {
-  int count = state_.generation_params().num_images_per_prompt.value();
-  output_ = output.slice(offset, count);
-
-  return count;
+void DiTRequest::handle_forward_output(torch::Tensor output) {
+  int count = state_.generation_params().num_images_per_prompt;
+  output_.tensors = torch::chunk(output, count);
 }
 
 const DiTRequestOutput DiTRequest::generate_output() {
@@ -109,16 +106,13 @@ const DiTRequestOutput DiTRequest::generate_output() {
   DiTGenerationOutput result;
   result.height = state_.generation_params().height;
   result.width = state_.generation_params().width;
-  result.seed = state_.generation_params().seed.value();
+  result.seed = state_.generation_params().seed;
 
   OpenCVImageEncoder encoder;
-  int count = state_.generation_params().num_images_per_prompt.value();
-  for (int idx = 0; idx < count; ++idx) {
-    torch::Tensor image = output_.tensor.slice(0, idx, idx + 1)
-                              .squeeze(0)
-                              .cpu()
-                              .to(torch::kFloat32)
-                              .contiguous();
+  int count = state_.generation_params().num_images_per_prompt;
+  for (size_t idx = 0; idx < count; ++idx) {
+    torch::Tensor image =
+        output_.tensors[idx].squeeze(0).cpu().to(torch::kFloat32).contiguous();
     encoder.encode(image, result.image);
     output.outputs.push_back(result);
   }

@@ -20,20 +20,20 @@ message Input {
   // Secondary negative prompt to exclude additional unwanted features
   optional string negative_prompt_2 = 4;
 
-  // prompt embeddings
-  optional Tensor prompt_embeds = 5;
+  // prompt embedding
+  optional Tensor prompt_embed = 5;
 
   // pooled prompt embeddings
-  optional Tensor pooled_prompt_embeds = 6;
+  optional Tensor pooled_prompt_embed = 6;
 
-  // negative prompt embeddings: [num_prompts][embedding_dim]
-  optional Tensor negative_prompt_embeds = 7;
+  // negative prompt embedding: [num_prompts][embedding_dim]
+  optional Tensor negative_prompt_embed = 7;
 
-  //pooled negative prompt embeddings
-  optional Tensor negative_pooled_prompt_embeds = 8;
+  //pooled negative prompt embedding
+  optional Tensor negative_pooled_prompt_embed = 8;
 
-  // initial latents: [batch_size][channels][height/8][width/8]
-  optional Tensor latents = 9;
+  // initial latent: [batch_size][channels][height/8][width/8]
+  optional Tensor latent = 9;
 }
 
 // Generation parameters container

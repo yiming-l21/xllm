@@ -33,21 +33,35 @@ using DiTOutputsFunc = std::function<std::vector<bool>(
 class Call;
 
 struct DiTGenerationParams {
+  bool operator==(const DiTGenerationParams& other) const {
+    return width == other.width && height == other.height &&
+           num_inference_steps == other.num_inference_steps &&
+           true_cfg_scale == other.true_cfg_scale &&
+           guidance_scale == other.guidance_scale &&
+           num_images_per_prompt == other.num_images_per_prompt &&
+           seed == other.seed &&
+           max_sequence_length == other.max_sequence_length;
+  }
+
+  bool operator!=(const DiTGenerationParams& other) const {
+    return !(*this == other);
+  }
+
   int32_t width = 512;
 
   int32_t height = 512;
 
-  std::optional<int32_t> num_inference_steps;
+  int32_t num_inference_steps = 28;
 
-  std::optional<float> true_cfg_scale;
+  float true_cfg_scale = 1.0;
 
-  std::optional<float> guidance_scale;
+  float guidance_scale = 3.5;
 
-  std::optional<uint32_t> num_images_per_prompt = 1;
+  uint32_t num_images_per_prompt = 1;
 
-  std::optional<int64_t> seed;
+  int64_t seed = 0;
 
-  std::optional<int32_t> max_sequence_length;
+  int32_t max_sequence_length = 512;
 };
 
 struct DiTInputParams {
@@ -55,55 +69,23 @@ struct DiTInputParams {
   std::string prompt;
 
   // Secondary prompt for additional details (e.g., color, lighting)
-  std::optional<std::string> prompt_2;
+  std::string prompt_2;
 
   // Negative prompt to exclude low-quality features
-  std::optional<std::string> negative_prompt;
+  std::string negative_prompt;
 
   // Secondary negative prompt to exclude additional unwanted features
-  std::optional<std::string> negative_prompt_2;
+  std::string negative_prompt_2;
 
-  // std::optional<std::string> ip_adapter_image;
+  torch::Tensor prompt_embed;
 
-  // std::optional<std::string> negative_ip_adapter_image;
+  torch::Tensor pooled_prompt_embed;
 
-  std::optional<torch::Tensor> prompt_embeds;
+  torch::Tensor negative_prompt_embed;
 
-  std::optional<torch::Tensor> pooled_prompt_embeds;
+  torch::Tensor negative_pooled_prompt_embed;
 
-  // std::optional<std::vector<std::vector<std::vector<float>>>>
-  //     ip_adapter_image_embeds;
-
-  std::optional<torch::Tensor> negative_prompt_embeds;
-
-  std::optional<torch::Tensor> negative_pooled_prompt_embeds;
-
-  // std::optional<std::vector<std::vector<std::vector<float>>>>
-  //     negative_ip_adapter_image_embeds;
-
-  std::optional<torch::Tensor> latents;
-
-  DiTInputParams to(torch::Device device, torch::ScalarType dtype) const {
-    DiTInputParams copy = *this;
-    if (copy.prompt_embeds) {
-      copy.prompt_embeds = copy.prompt_embeds->to(device, dtype);
-    }
-    if (copy.pooled_prompt_embeds) {
-      copy.pooled_prompt_embeds = copy.pooled_prompt_embeds->to(device, dtype);
-    }
-    if (copy.negative_prompt_embeds) {
-      copy.negative_prompt_embeds =
-          copy.negative_prompt_embeds->to(device, dtype);
-    }
-    if (copy.negative_pooled_prompt_embeds) {
-      copy.negative_pooled_prompt_embeds =
-          copy.negative_pooled_prompt_embeds->to(device, dtype);
-    }
-    if (copy.latents) {
-      copy.latents = copy.latents->to(device, dtype);
-    }
-    return copy;
-  }
+  torch::Tensor latent;
 };
 
 struct DiTRequestState {
