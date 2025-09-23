@@ -17,6 +17,7 @@ limitations under the License.
 #include "dit_request_params.h"
 
 #include "core/common/instance_name.h"
+#include "core/common/macros.h"
 #include "core/util/uuid.h"
 #include "request.h"
 
@@ -111,21 +112,20 @@ static const void* get_data_from_contents(const proto::TensorContents& contents,
   }
 }
 
-static std::optional<torch::Tensor> proto_to_torch(
-    const proto::Tensor& proto_tensor) {
+torch::Tensor proto_to_torch(const proto::Tensor& proto_tensor) {
   if (proto_tensor.datatype().empty()) {
     LOG(ERROR) << "Proto Tensor missing required field: datatype (e.g., "
                   "\"FP32\", \"INT64\")";
-    return std::nullopt;
+    return torch::Tensor();
   }
   if (proto_tensor.shape().empty()) {
     LOG(ERROR) << "Proto Tensor has empty shape (invalid tensor)";
-    return std::nullopt;
+    return torch::Tensor();
   }
   if (!proto_tensor.has_contents()) {
     LOG(ERROR)
         << "Proto Tensor missing required field: contents (TensorContents)";
-    return std::nullopt;
+    return torch::Tensor();
   }
   const auto& proto_contents = proto_tensor.contents();
 
@@ -139,7 +139,7 @@ static std::optional<torch::Tensor> proto_to_torch(
     if (dim <= 0) {
       LOG(ERROR) << "Proto Tensor has invalid dimension: " << dim
                  << " (must be positive, datatype=" << proto_datatype << ")";
-      return std::nullopt;
+      return torch::Tensor();
     }
     torch_shape.emplace_back(dim);
     total_elements *= dim;
@@ -174,7 +174,7 @@ static std::optional<torch::Tensor> proto_to_torch(
   if (data_ptr == nullptr) {
     LOG(ERROR) << "Failed to get data from TensorContents (datatype="
                << proto_datatype << ")";
-    return std::nullopt;
+    return torch::Tensor();
   }
   if (data_count != static_cast<size_t>(total_elements)) {
     LOG(ERROR) << "Proto Tensor data count mismatch (datatype="
@@ -182,7 +182,7 @@ static std::optional<torch::Tensor> proto_to_torch(
                << "expected " << total_elements
                << " elements (shape=" << tensor_shape << "), "
                << "got " << data_count << " elements";
-    return std::nullopt;
+    return torch::Tensor();
   }
 
   torch::Tensor tensor =
@@ -224,23 +224,23 @@ DiTRequestParams::DiTRequestParams(const proto::ImageGenerationRequest& request,
     input_params.negative_prompt_2 = input.negative_prompt_2();
   }
 
-  if (input.has_prompt_embeds()) {
-    input_params.prompt_embeds = proto_to_torch(input.prompt_embeds());
+  if (input.has_prompt_embed()) {
+    input_params.prompt_embed = proto_to_torch(input.prompt_embed());
   }
-  if (input.has_pooled_prompt_embeds()) {
-    input_params.pooled_prompt_embeds =
-        proto_to_torch(input.pooled_prompt_embeds());
+  if (input.has_pooled_prompt_embed()) {
+    input_params.pooled_prompt_embed =
+        proto_to_torch(input.pooled_prompt_embed());
   }
-  if (input.has_negative_prompt_embeds()) {
-    input_params.negative_prompt_embeds =
-        proto_to_torch(input.negative_prompt_embeds());
+  if (input.has_negative_prompt_embed()) {
+    input_params.negative_prompt_embed =
+        proto_to_torch(input.negative_prompt_embed());
   }
-  if (input.has_negative_pooled_prompt_embeds()) {
-    input_params.negative_pooled_prompt_embeds =
-        proto_to_torch(input.negative_pooled_prompt_embeds());
+  if (input.has_negative_pooled_prompt_embed()) {
+    input_params.negative_pooled_prompt_embed =
+        proto_to_torch(input.negative_pooled_prompt_embed());
   }
-  if (input.has_latents()) {
-    input_params.latents = proto_to_torch(input.latents());
+  if (input.has_latent()) {
+    input_params.latent = proto_to_torch(input.latent());
   }
 
   // generation params
@@ -275,6 +275,11 @@ DiTRequestParams::DiTRequestParams(const proto::ImageGenerationRequest& request,
 
 bool DiTRequestParams::verify_params(
     std::function<bool(DiTRequestOutput)> callback) const {
+  if (input_params.prompt.empty()) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT, "prompt is empty");
+    return false;
+  }
+
   return true;
 }
 

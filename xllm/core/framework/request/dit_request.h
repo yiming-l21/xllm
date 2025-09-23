@@ -41,7 +41,7 @@ class DiTRequest : public RequestBase {
 
   bool finished() const;
 
-  int handle_forward_output(int offset, const DiTForwardOutput& output);
+  void handle_forward_output(torch::Tensor output);
 
   const DiTRequestOutput generate_output();
 

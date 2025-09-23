@@ -402,60 +402,70 @@ class FluxPipelineImpl : public torch::nn::Module {
     return {packed_latents, latent_image_ids};
   }
   DiTForwardOutput forward(const DiTForwardInput& input) {
-    const auto& input_params = input.input_params;
     const auto& generation_params = input.generation_params;
 
-    torch::Generator generator = torch::Generator();
-    torch::manual_seed(generation_params.seed.value_or(42));
-    std::vector<torch::Generator> generators_vec;
-    generators_vec.push_back(generator);
-    std::optional<std::vector<torch::Generator>> generators_opt =
-        generators_vec;
-    auto prompt_2_input = input_params.prompt_2.has_value()
-                              ? std::make_optional(std::vector<std::string>{
-                                    input_params.prompt_2.value()})
-                              : std::nullopt;
-    auto negative_prompt_input =
-        input_params.negative_prompt.has_value()
-            ? std::make_optional(std::vector<std::string>{
-                  input_params.negative_prompt.value()})
+    auto seed = generation_params.seed > 0 ? generation_params.seed : 42;
+    torch::manual_seed(seed);
+    std::vector<torch::Generator> generators;
+    generators.push_back(torch::Generator());
+
+    auto prompts = std::make_optional(input.prompts);
+    auto prompts_2 = input.prompts_2.empty()
+                         ? std::nullopt
+                         : std::make_optional(input.prompts_2);
+    auto negative_prompts = input.negative_prompts.empty()
+                                ? std::nullopt
+                                : std::make_optional(input.negative_prompts);
+    auto negative_prompts_2 =
+        input.negative_prompts_2.empty()
+            ? std::nullopt
+            : std::make_optional(input.negative_prompts_2);
+
+    auto latents = input.latents.defined() ? std::make_optional(input.latents)
+                                           : std::nullopt;
+    auto prompt_embeds = input.prompt_embeds.defined()
+                             ? std::make_optional(input.prompt_embeds)
+                             : std::nullopt;
+    auto negative_prompt_embeds =
+        input.negative_prompt_embeds.defined()
+            ? std::make_optional(input.negative_prompt_embeds)
             : std::nullopt;
-    auto negative_prompt_2_input =
-        input_params.negative_prompt_2.has_value()
-            ? std::make_optional(std::vector<std::string>{
-                  input_params.negative_prompt_2.value()})
+    auto pooled_prompt_embeds =
+        input.pooled_prompt_embeds.defined()
+            ? std::make_optional(input.pooled_prompt_embeds)
             : std::nullopt;
+    auto negative_pooled_prompt_embeds =
+        input.negative_pooled_prompt_embeds.defined()
+            ? std::make_optional(input.negative_pooled_prompt_embeds)
+            : std::nullopt;
+
     FluxPipelineOutput output = forward_(
-        std::make_optional(
-            std::vector<std::string>{input_params.prompt}),  // prompt
-        prompt_2_input,                                      // prompt_2
-        negative_prompt_input,                               // negative_prompt
-        negative_prompt_2_input,                       // negative_prompt_2
-        generation_params.true_cfg_scale.value_or(1),  // cfg scale
+        prompts,                                       // prompt
+        prompts_2,                                     // prompt_2
+        negative_prompts,                              // negative_prompt
+        negative_prompts_2,                            // negative_prompt_2
+        generation_params.true_cfg_scale,              // cfg scale
         std::make_optional(generation_params.height),  // height
         std::make_optional(generation_params.width),   // width
-        generation_params.num_inference_steps.value_or(
-            28),                                         // num_inference_steps
-        std::nullopt,                                    // sigmas
-        generation_params.guidance_scale.value_or(3.5),  // guidance_scale
-        generation_params.num_images_per_prompt.value_or(
-            1),                               // num_images_per_prompt
-        generators_opt,                       // generator
-        input_params.latents,                 // latents
-        input_params.prompt_embeds,           // prompt_embeds
-        input_params.negative_prompt_embeds,  // negative_prompt_embeds
-        input_params.pooled_prompt_embeds,    // pooled_prompt_embeds
-        input_params
-            .negative_pooled_prompt_embeds,  // negative_pooled_prompt_embeds
-        "pil",                               // output_type
-        generation_params.max_sequence_length.value_or(
-            512)  // max_sequence_length
+        generation_params.num_inference_steps,         // num_inference_steps
+        std::nullopt,                                  // sigmas
+        generation_params.guidance_scale,              // guidance_scale
+        generation_params.num_images_per_prompt,       // num_images_per_prompt
+        std::make_optional(generators),                // generator
+        latents,                                       // latents
+        prompt_embeds,                                 // prompt_embeds
+        negative_prompt_embeds,                        // negative_prompt_embeds
+        pooled_prompt_embeds,                          // pooled_prompt_embeds
+        negative_pooled_prompt_embeds,         // negative_pooled_prompt_embeds
+        "pil",                                 // output_type
+        generation_params.max_sequence_length  // max_sequence_length
     );
 
     DiTForwardOutput out;
-    out.tensor = output.images[0];
+    out.tensors = torch::chunk(output.images[0], input.batch_size);
     return out;
   }
+
   torch::Tensor _get_clip_prompt_embeds(
       std::vector<std::string>& prompt,
       std::optional<torch::Device> device = std::nullopt,

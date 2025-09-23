@@ -29,27 +29,63 @@ namespace xllm {
 struct DiTForwardInput {
   DiTForwardInput to(const torch::Device& device,
                      torch::ScalarType dtype) const {
-    DiTForwardInput input;
-    input.input_params = input_params.to(device, dtype);
-    input.generation_params = generation_params;
+    DiTForwardInput input = *this;
+
+    if (prompt_embeds.defined()) {
+      input.prompt_embeds = prompt_embeds.to(device, dtype);
+    }
+
+    if (pooled_prompt_embeds.defined()) {
+      input.pooled_prompt_embeds = pooled_prompt_embeds.to(device, dtype);
+    }
+
+    if (negative_prompt_embeds.defined()) {
+      input.negative_prompt_embeds = negative_prompt_embeds.to(device, dtype);
+    }
+
+    if (negative_pooled_prompt_embeds.defined()) {
+      input.negative_pooled_prompt_embeds =
+          negative_pooled_prompt_embeds.to(device, dtype);
+    }
+
+    if (latents.defined()) {
+      input.latents = latents.to(device, dtype);
+    }
     return input;
   }
 
-  DiTInputParams input_params;
+  int batch_size = 0;
+
+  // Primary input text description for image generation
+  std::vector<std::string> prompts;
+
+  // Secondary prompt for additional details (e.g., color, lighting)
+  std::vector<std::string> prompts_2;
+
+  // Negative prompt to exclude low-quality features
+  std::vector<std::string> negative_prompts;
+
+  // Secondary negative prompt to exclude additional unwanted features
+  std::vector<std::string> negative_prompts_2;
+
+  torch::Tensor prompt_embeds;
+
+  torch::Tensor pooled_prompt_embeds;
+
+  torch::Tensor negative_prompt_embeds;
+
+  torch::Tensor negative_pooled_prompt_embeds;
+
+  torch::Tensor latents;
+
+  // generation params
   DiTGenerationParams generation_params;
 };
 
 // dit related forward output params
 struct DiTForwardOutput {
   // generated tensor
-  torch::Tensor tensor;
-
-  DiTForwardOutput slice(int offset, int count) const {
-    DiTForwardOutput output;
-    output.tensor = tensor.slice(0, offset, offset + count).clone();
-
-    return output;
-  }
+  std::vector<torch::Tensor> tensors;
 };
 
 }  // namespace xllm
