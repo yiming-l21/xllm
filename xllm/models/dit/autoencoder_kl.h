@@ -177,6 +177,7 @@ class VAEImageProcessorImpl : public torch::nn::Module {
   }
 };
 TORCH_MODULE(VAEImageProcessor);
+
 class SpatialNormImpl : public torch::nn::Module {
  public:
   SpatialNormImpl(int64_t f_channels, int64_t zq_channels) {
@@ -611,9 +612,9 @@ class Upsample2DImpl : public torch::nn::Module {
   torch::Tensor forward(const torch::Tensor& hidden_states,
                         const std::vector<int64_t>& output_size = {}) {
     TORCH_CHECK(hidden_states.size(1) == channels_,
-                "输入通道不匹配: 预期",
+                "Input channels mismatch: expected",
                 channels_,
-                "，实际",
+                ",actually",
                 hidden_states.size(1));
 
     torch::Tensor x = hidden_states;
@@ -700,8 +701,8 @@ class Upsample2DImpl : public torch::nn::Module {
   std::string name_;
   bool interpolate_;
 };
-
 TORCH_MODULE(Upsample2D);
+
 class ResnetBlock2DImpl : public torch::nn::Module {
  public:
   ResnetBlock2DImpl(int64_t in_channels,
@@ -2011,6 +2012,7 @@ class VAEDecoderImpl : public torch::nn::Module {
   torch::nn::Conv2d conv_out_{nullptr};
 };
 TORCH_MODULE(VAEDecoder);
+
 // VAE implementation, including encoder and decoder
 class VAEImpl : public torch::nn::Module {
  public:

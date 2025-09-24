@@ -98,16 +98,13 @@ std::pair<torch::Tensor, int64_t> retrieve_timesteps(
   }
   return {scheduler_timesteps, steps};
 }
-torch::Tensor randn_tensor(
-    const std::vector<int64_t>& shape,
-    const std::optional<torch::Generator>& generator = std::nullopt,
-    torch::Device device = torch::kCPU,
-    torch::ScalarType dtype = torch::kFloat32,
-    torch::Layout layout = torch::kStrided) {
+torch::Tensor randn_tensor(const std::vector<int64_t>& shape,
+                           torch::Generator generator,
+                           torch::TensorOptions& options) {
   if (shape.empty()) {
     throw std::invalid_argument("Shape cannot be empty.");
   }
-  torch::Device rand_device = device;
+  torch::Device rand_device = options.device();
   bool generator_provided = false;  // generator.has_value();
 
   // if (generator_provided) {
@@ -152,19 +149,16 @@ torch::Tensor randn_tensor(
   // }
   torch::manual_seed(42);
   torch::Tensor latents;
-  torch::TensorOptions options =
-      torch::dtype(dtype).device(rand_device).layout(layout);
+  // torch::TensorOptions options =
+  //     torch::dtype(dtype).device(rand_device).layout(layout);
 
   try {
     if (generator_provided) {
-      latents = torch::randn(shape, generator.value(), options);
+      latents = torch::randn(shape, generator, options);
     } else {
       latents = torch::randn(shape, options);
     }
 
-    if (latents.device() != device) {
-      latents = latents.to(device);
-    }
   } catch (const std::exception& e) {
     LOG(ERROR) << "Error generating random tensor: " << e.what();
     throw;
@@ -325,8 +319,7 @@ class FluxPipelineImpl : public torch::nn::Module {
     vae_scale_factor_ = 1 << (model_args.vae_block_out_channels().size() - 1);
     _execution_device = options_.device();
     _execution_dtype = torch::kBFloat16;
-    LOG(INFO) << _execution_device << " is the execution device";
-    LOG(INFO) << _execution_dtype << " is the execution dtype";
+
     vae_shift_factor_ = model_args.vae_shift_factor();
     vae_scaling_factor_ = model_args.vae_scale_factor();
     default_sample_size_ = 128;
@@ -334,7 +327,6 @@ class FluxPipelineImpl : public torch::nn::Module {
     LOG(INFO) << "Initializing Flux pipeline...";
     vae_image_processor_ = VAEImageProcessor(
         true, vae_scale_factor_, 4, "lanczos", -1, true, false, false, false);
-    LOG(INFO) << "VAE image processor initialized.";
     vae_ = VAE(
         context.get_model_context("vae"), _execution_device, _execution_dtype);
     LOG(INFO) << "VAE initialized.";
@@ -342,10 +334,7 @@ class FluxPipelineImpl : public torch::nn::Module {
         "pos_embed",
         FluxPosEmbed(
             10000, context.get_model_args("transformer").dit_axes_dims_rope()));
-
-    transformer_ = FluxDiTModel(context.get_model_context("transformer"),
-                                _execution_device,
-                                _execution_dtype);
+    transformer_ = FluxDiTModel(context.get_model_context("transformer"));
     LOG(INFO) << "DiT transformer initialized.";
     t5_ = T5EncoderModel(context.get_model_context("text_encoder_2"));
     LOG(INFO) << "T5 initialized.";
@@ -354,7 +343,6 @@ class FluxPipelineImpl : public torch::nn::Module {
     scheduler_ =
         FlowMatchEulerDiscreteScheduler(context.get_model_context("scheduler"));
     LOG(INFO) << "Flux pipeline initialized.";
-    // register modules
     register_module("vae", vae_);
     LOG(INFO) << "VAE registered.";
     register_module("vae_image_processor", vae_image_processor_);
@@ -439,18 +427,14 @@ class FluxPipelineImpl : public torch::nn::Module {
           std::to_string(max_sequence_length.value()));
     }
   }
+
   torch::Tensor _prepare_latent_image_ids(int64_t batch_size,
                                           int64_t height,
-                                          int64_t width,
-                                          torch::Device device,
-                                          torch::ScalarType dtype) {
-    torch::Tensor latent_image_ids =
-        torch::zeros({height, width, 3}, torch::dtype(dtype).device(device));
-    torch::Tensor height_range =
-        torch::arange(height, torch::dtype(dtype).device(device)).unsqueeze(1);
+                                          int64_t width) {
+    torch::Tensor latent_image_ids = torch::zeros({height, width, 3}, options_);
+    torch::Tensor height_range = torch::arange(height, options_).unsqueeze(1);
     latent_image_ids.select(2, 1) += height_range;
-    torch::Tensor width_range =
-        torch::arange(width, torch::dtype(dtype).device(device)).unsqueeze(0);
+    torch::Tensor width_range = torch::arange(width, options_).unsqueeze(0);
     latent_image_ids.select(2, 2) += width_range;
     latent_image_ids = latent_image_ids.view({height * width, 3});
     return latent_image_ids;
@@ -494,8 +478,6 @@ class FluxPipelineImpl : public torch::nn::Module {
       int64_t num_channels_latents,
       int64_t height,
       int64_t width,
-      torch::ScalarType dtype,
-      torch::Device device,
       torch::Generator generator,
       std::optional<torch::Tensor> latents = std::nullopt) {
     int64_t adjusted_height = 2 * (height / (vae_scale_factor_ * 2));
@@ -504,19 +486,18 @@ class FluxPipelineImpl : public torch::nn::Module {
         batch_size, num_channels_latents, adjusted_height, adjusted_width};
     if (latents.has_value()) {
       torch::Tensor latent_image_ids = _prepare_latent_image_ids(
-          batch_size, adjusted_height / 2, adjusted_width / 2, device, dtype);
-      return {latents.value().to(device).to(dtype), latent_image_ids};
+          batch_size, adjusted_height / 2, adjusted_width / 2);
+      return {latents.value(), latent_image_ids};
     }
     torch::manual_seed(42);
-    torch::Tensor latents_tensor =
-        randn_tensor(shape, generator, device, dtype);
+    torch::Tensor latents_tensor = randn_tensor(shape, generator, options_);
     torch::Tensor packed_latents = _pack_latents(latents_tensor,
                                                  batch_size,
                                                  num_channels_latents,
                                                  adjusted_height,
                                                  adjusted_width);
     torch::Tensor latent_image_ids = _prepare_latent_image_ids(
-        batch_size, adjusted_height / 2, adjusted_width / 2, device, dtype);
+        batch_size, adjusted_height / 2, adjusted_width / 2);
     return {packed_latents, latent_image_ids};
   }
   DiTForwardOutput forward(const DiTForwardInput& input) {
@@ -772,8 +753,7 @@ class FluxPipelineImpl : public torch::nn::Module {
         num_channels_latents,
         actual_height,
         actual_width,
-        _execution_dtype,
-        device,
+        // TODO:
         generators.has_value() ? generators.value()[0] : torch::Generator(),
         latents);
     // prepare timestep
@@ -858,7 +838,6 @@ class FluxPipelineImpl : public torch::nn::Module {
         prepared_latents = prepared_latents.to(latents.value().dtype());
       }
     }
-
     torch::Tensor image;
     if (output_type == "latent") {
       image = prepared_latents;
@@ -868,16 +847,16 @@ class FluxPipelineImpl : public torch::nn::Module {
           prepared_latents, actual_height, actual_width, vae_scale_factor_);
       unpacked_latents =
           (unpacked_latents / vae_scaling_factor_) + vae_shift_factor_;
+      unpacked_latents = unpacked_latents.to(_execution_dtype);
       image = vae_->decode(unpacked_latents).sample;
       image = vae_image_processor_->postprocess(image, output_type);
     }
-
     return FluxPipelineOutput{{image}};
   }
 
   void load_model(std::unique_ptr<DiTModelLoader> loader) {
     LOG(INFO) << "FluxPipeline loading model from" << loader->model_root_path();
-
+    // transformer_.to(options_);
     std::string model_path = loader->model_root_path();
     auto transformer_loader = loader->take_component_loader("transformer");
     auto vae_loader = loader->take_component_loader("vae");
