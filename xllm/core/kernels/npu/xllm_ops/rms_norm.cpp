@@ -47,7 +47,7 @@ RMSNormImpl::RMSNormImpl(int64_t dim,
 
 torch::Tensor RMSNormImpl::forward(const torch::Tensor& hidden_states) {
   auto [output, rstd] =
-      at_npu::native::custom_ops::npu_rms_norm(hidden_states, weight_);
+      at_npu::native::custom_ops::npu_rms_norm(hidden_states, weight_, eps_);
   if (is_bias_ && bias_.defined()) {
     output = output + bias_.to(output.device());
   }

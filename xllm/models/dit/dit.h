@@ -34,23 +34,27 @@ namespace xllm {
 inline torch::Tensor apply_rotary_emb(const torch::Tensor& x,
                                       const torch::Tensor& freqs_cis) {
   // assume freqs_cis is [2, S, D]，[0] is cos，[1] is sin
-  auto cos = freqs_cis[0].unsqueeze(0).unsqueeze(1);  // [1, 1, 6542, 128]
-  auto sin = freqs_cis[1].unsqueeze(0).unsqueeze(1);  // [1, 1, 6542, 128]
-  std::vector<int64_t> reshape_shape;
-  for (int64_t i = 0; i < x.dim() - 1; ++i) {
-    reshape_shape.push_back(x.size(i));
-  }
-  reshape_shape.push_back(-1);
-  reshape_shape.push_back(2);
-  torch::Tensor reshaped = x.reshape(reshape_shape);
-  torch::Tensor x_real = reshaped.select(-1, 0);
-  torch::Tensor x_imag = reshaped.select(-1, 1);
-  // x_rotated = [-x_imag, x_real]
-  torch::Tensor neg_x_imag = -x_imag;
-  auto x_rotated = torch::stack({neg_x_imag, x_real}, -1).flatten(3);
-  return (x.to(torch::kFloat32) * cos.to(torch::kFloat32) +
-          x_rotated.to(torch::kFloat32) * sin.to(torch::kFloat32))
-      .to(x.dtype());
+  auto cos = freqs_cis[0].unsqueeze(0).unsqueeze(1).to(
+      torch::kBFloat16);  // [1, 1, 6542, 128]
+  auto sin = freqs_cis[1].unsqueeze(0).unsqueeze(1).to(
+      torch::kBFloat16);  // [1, 1, 6542, 128]
+  // std::vector<int64_t> reshape_shape;
+  // for (int64_t i = 0; i < x.dim() - 1; ++i) {
+  //   reshape_shape.push_back(x.size(i));
+  // }
+  // reshape_shape.push_back(-1);
+  // reshape_shape.push_back(2);
+  // torch::Tensor reshaped = x.reshape(reshape_shape);
+
+  // torch::Tensor x_real = reshaped.select(-1, 0);
+  // torch::Tensor x_imag = reshaped.select(-1, 1);
+  //  x_rotated = [-x_imag, x_real]
+  // torch::Tensor neg_x_imag = -x_imag;
+  // auto x_rotated = torch::stack({neg_x_imag, x_real}, -1).flatten(3);
+  // return (x.to(torch::kFloat32) * cos.to(torch::kFloat32) +
+  //         x_rotated.to(torch::kFloat32) * sin.to(torch::kFloat32))
+  //     .to(x.dtype());
+  return at_npu::native::custom_ops::npu_rope(x, cos, sin, 1);
 }
 class DiTRMSNormImpl : public torch::nn::Module {
  public:
@@ -197,9 +201,15 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     int64_t inner_dim = key.size(-1);
     int64_t attn_heads = heads_;
     int64_t head_dim = inner_dim / attn_heads;
-    query = query.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
-    key = key.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
-    value = value.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
+    query = query.view({batch_size, -1, attn_heads, head_dim})
+                .transpose(1, 2)
+                .contiguous();
+    key = key.view({batch_size, -1, attn_heads, head_dim})
+              .transpose(1, 2)
+              .contiguous();
+    value = value.view({batch_size, -1, attn_heads, head_dim})
+                .transpose(1, 2)
+                .contiguous();
 
     // Apply Q/K normalization if enabled
     if (norm_q_) query = norm_q_->forward(query);
@@ -412,9 +422,12 @@ class FluxAttentionImpl : public torch::nn::Module {
           norm_added_k_->forward(encoder_hidden_states_key_proj);
     // TODO some are right some are wrong query1& key1.
     // encoder_hidden_states_query_proj
-    auto query1 = torch::cat({encoder_hidden_states_query_proj, query}, 2);
-    auto key1 = torch::cat({encoder_hidden_states_key_proj, key}, 2);
-    auto value1 = torch::cat({encoder_hidden_states_value_proj, value}, 2);
+    auto query1 =
+        torch::cat({encoder_hidden_states_query_proj, query}, 2).contiguous();
+    auto key1 =
+        torch::cat({encoder_hidden_states_key_proj, key}, 2).contiguous();
+    auto value1 =
+        torch::cat({encoder_hidden_states_value_proj, value}, 2).contiguous();
     if (image_rotary_emb.defined()) {
       query1 = apply_rotary_emb(query1, image_rotary_emb);
       key1 = apply_rotary_emb(key1, image_rotary_emb);
@@ -466,10 +479,10 @@ class PixArtAlphaTextProjectionImpl : public torch::nn::Module {
     int64_t out_dim =
         hidden_size;  //(out_features == -1) ? hidden_size : out_features;
     linear_1_ =
-        register_module("linear_1", DiTLinear(in_features, hidden_size, true));
+        register_module("linear_1", DiTLinear(in_features, hidden_size, true,options_));
 
     linear_2_ =
-        register_module("linear_2", DiTLinear(hidden_size, out_dim, true));
+        register_module("linear_2", DiTLinear(hidden_size, out_dim, true,options_));
 
     linear_1_->weight.set_data(linear_1_->weight.to(options_));
     linear_1_->bias.set_data(linear_1_->bias.to(options_));
@@ -606,14 +619,14 @@ class TimestepEmbeddingImpl : public torch::nn::Module {
                         torch::TensorOptions& options)
       : options_(options) {
     linear_1_ = register_module(
-        "linear_1", DiTLinear(in_channels, time_embed_dim, sample_proj_bias));
+        "linear_1", DiTLinear(in_channels, time_embed_dim, sample_proj_bias,options_));
 
     act_fn_ = register_module("act_fn", torch::nn::SiLU());
 
     int64_t time_embed_dim_out = (out_dim == -1) ? time_embed_dim : out_dim;
     linear_2_ = register_module(
         "linear_2",
-        DiTLinear(time_embed_dim, time_embed_dim_out, sample_proj_bias));
+        DiTLinear(time_embed_dim, time_embed_dim_out, sample_proj_bias,options_));
     linear_1_->weight.set_data(linear_1_->weight.to(options_));
     linear_1_->bias.set_data(linear_1_->bias.to(options_));
     linear_2_->weight.set_data(linear_2_->weight.to(options_));
@@ -877,7 +890,7 @@ class AdaLayerNormZeroImpl : public torch::nn::Module {
     silu_ = register_module("silu", torch::nn::SiLU());
 
     linear_ = register_module(
-        "linear", DiTLinear(embedding_dim, 6 * embedding_dim, bias));
+        "linear", DiTLinear(embedding_dim, 6 * embedding_dim, bias,options_));
     linear_->weight.set_data(linear_->weight.to(options_));
     linear_->bias.set_data(linear_->bias.to(options_));
     norm_ = register_module(
@@ -915,6 +928,13 @@ class AdaLayerNormZeroImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
+<<<<<<< HEAD
+=======
+    linear_->to(device_);
+    // linear_->load_state_dict(
+    //     state_dict.get_dict_with_prefix("linear."));
+
+>>>>>>> 6886389 (feat:support Rope and additional addmatmul)
     //  linear
     const auto linear_weight = state_dict.get_tensor("linear.weight");
     if (linear_weight.defined()) {
@@ -947,7 +967,7 @@ class AdaLayerNormZeroSingleImpl : public torch::nn::Module {
       : options_(options) {
     silu_ = register_module("silu", torch::nn::SiLU());
     linear_ = register_module(
-        "linear", DiTLinear(embedding_dim, 3 * embedding_dim, bias));
+        "linear", DiTLinear(embedding_dim, 3 * embedding_dim, bias,options_));
     linear_->weight.set_data(linear_->weight.to(options_));
     linear_->bias.set_data(linear_->bias.to(options_));
     norm_ = register_module(
@@ -1009,7 +1029,7 @@ class AdaLayerNormContinuousImpl : public torch::nn::Module {
     silu_ = register_module("silu", torch::nn::SiLU());
     linear_ = register_module(
         "linear",
-        DiTLinear(conditioning_embedding_dim, 2 * embedding_dim, bias));
+        DiTLinear(conditioning_embedding_dim, 2 * embedding_dim, bias,options_));
     linear_->weight.set_data(linear_->weight.to(options_));
     linear_->bias.set_data(linear_->bias.to(options_));
     norm_ = register_module(
@@ -1074,8 +1094,7 @@ class FeedForwardImpl : public torch::nn::Module {
     auto dim_out = dim;
 
     // linear1
-    linear1_ = register_module("linear1", DiTLinear(dim, inner_dim, true));
-
+    linear1_ = register_module("linear1", DiTLinear(dim, inner_dim, true,options_));
     // activation
     activation_ = register_module(
         "activation",
@@ -1083,7 +1102,8 @@ class FeedForwardImpl : public torch::nn::Module {
             [](const at::Tensor& x) { return torch::gelu(x, "tanh"); })));
 
     // linear2
-    linear2_ = register_module("linear2", DiTLinear(inner_dim, dim_out, true));
+
+    linear2_ = register_module("linear2", DiTLinear(inner_dim, dim_out, true,options_));
 
     linear1_->weight.set_data(linear1_->weight.to(options_));
     linear1_->bias.set_data(linear1_->bias.to(options_));
@@ -1099,35 +1119,14 @@ class FeedForwardImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    const auto linear1_weight = state_dict.get_tensor("net.0.proj.weight");
-    if (linear1_weight.defined()) {
-      DCHECK_EQ(linear1_weight.sizes(), linear1_->weight.sizes())
-          << "linear1 weight size mismatch";
-      linear1_->weight.data().copy_(linear1_weight.to(options_));
-    }
-    const auto linear1_bias = state_dict.get_tensor("net.0.proj.bias");
-    if (linear1_bias.defined()) {
-      DCHECK_EQ(linear1_bias.sizes(), linear1_->bias.sizes())
-          << "linear1 bias size mismatch";
-      linear1_->bias.data().copy_(linear1_bias.to(options_));
-    }
-    // linear2
-    const auto linear2_weight = state_dict.get_tensor("net.2.weight");
-    if (linear2_weight.defined()) {
-      DCHECK_EQ(linear2_weight.sizes(), linear2_->weight.sizes())
-          << "linear2 weight size mismatch";
-      linear2_->weight.data().copy_(linear2_weight.to(options_));
-    }
-    const auto linear2_bias = state_dict.get_tensor("net.2.bias");
-    if (linear2_bias.defined()) {
-      DCHECK_EQ(linear2_bias.sizes(), linear2_->bias.sizes())
-          << "linear2 bias size mismatch";
-      linear2_->bias.data().copy_(linear2_bias.to(options_));
-    }
+    // linear1_->to(device_);
+    // linear2_->to(device_);
+    linear1_->load_state_dict(state_dict.get_dict_with_prefix("net.0.proj."));
+    linear2_->load_state_dict(state_dict.get_dict_with_prefix("net.2."));
   }
 
  private:
-  DiTLinear linear1_{nullptr};
+  xllm_ops::AddMatmul linear1_{nullptr};
   torch::nn::Functional activation_{nullptr};
   DiTLinear linear2_{nullptr};
   torch::TensorOptions options_;
@@ -1148,12 +1147,14 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
         register_module("norm", AdaLayerNormZeroSingle(dim, true, options_));
 
     int64_t mlp_out_dim = mlp_hidden_dim_;
-    proj_mlp_ = register_module("proj_mlp", DiTLinear(dim, mlp_out_dim, true));
+    proj_mlp_ = register_module(
+        "proj_mlp", xllm_ops::AddMatmul(dim, mlp_out_dim, true, device, dtype));
 
     int64_t proj_in_dim = dim + mlp_hidden_dim_;
     int64_t proj_out_dim = dim;
-    proj_out_ =
-        register_module("proj_out", DiTLinear(proj_in_dim, proj_out_dim, true));
+    proj_out_ = register_module(
+        "proj_out",
+        xllm_ops::AddMatmul(proj_in_dim, proj_out_dim, true, device, dtype));
 
     proj_mlp_->weight.set_data(proj_mlp_->weight.to(options_));
     proj_mlp_->bias.set_data(proj_mlp_->bias.to(options_));
@@ -1193,37 +1194,16 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
     // norm
     norm_->load_state_dict(state_dict.get_dict_with_prefix("norm."));
     // proj_mlp
-    const auto proj_mlp_weight = state_dict.get_tensor("proj_mlp.weight");
-    if (proj_mlp_weight.defined()) {
-      DCHECK_EQ(proj_mlp_weight.sizes(), proj_mlp_->weight.sizes())
-          << "proj mlp weight size mismatch";
-      proj_mlp_->weight.data().copy_(proj_mlp_weight.to(options_));
-    }
-    const auto proj_mlp_bias = state_dict.get_tensor("proj_mlp.bias");
-    if (proj_mlp_bias.defined()) {
-      DCHECK_EQ(proj_mlp_bias.sizes(), proj_mlp_->bias.sizes())
-          << "proj mlp bias size mismatch";
-      proj_mlp_->bias.data().copy_(proj_mlp_bias.to(options_));
-    }
-    // proj_out
-    const auto proj_out_weight = state_dict.get_tensor("proj_out.weight");
-    if (proj_out_weight.defined()) {
-      DCHECK_EQ(proj_out_weight.sizes(), proj_out_->weight.sizes())
-          << "proj out weight size mismatch";
-      proj_out_->weight.data().copy_(proj_out_weight.to(options_));
-    }
-    const auto proj_out_bias = state_dict.get_tensor("proj_out.bias");
-    if (proj_out_bias.defined()) {
-      DCHECK_EQ(proj_out_bias.sizes(), proj_out_->bias.sizes())
-          << "proj out bias size mismatch";
-      proj_out_->bias.data().copy_(proj_out_bias.to(options_));
-    }
+
+    proj_mlp_->load_state_dict(state_dict.get_dict_with_prefix("proj_mlp."));
+    // proj_out_
+    proj_out_->load_state_dict(state_dict.get_dict_with_prefix("proj_out."));
   }
 
  private:
   AdaLayerNormZeroSingle norm_{nullptr};
-  DiTLinear proj_mlp_{nullptr};
-  DiTLinear proj_out_{nullptr};
+  xllm_ops::AddMatmul proj_mlp_{nullptr};
+  xllm_ops::AddMatmul proj_out_{nullptr};
   torch::nn::Functional act_mlp_{nullptr};
   FluxSingleAttention attn_{nullptr};
   int64_t mlp_hidden_dim_;
@@ -1363,9 +1343,9 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
           "time_text_embed", CombinedTimestepTextProjEmbeddings(context));
     }
     context_embedder_ = register_module(
-        "context_embedder", DiTLinear(joint_attention_dim, inner_dim));
+        "context_embedder", DiTLinear(joint_attention_dim, inner_dim,options_));
     x_embedder_ =
-        register_module("x_embedder", DiTLinear(out_channels_, inner_dim));
+        register_module("x_embedder", DiTLinear(out_channels_, inner_dim,options_));
     context_embedder_->weight.set_data(context_embedder_->weight.to(options_));
     context_embedder_->bias.set_data(context_embedder_->bias.to(options_));
     x_embedder_->weight.set_data(x_embedder_->weight.to(options_));
@@ -1389,7 +1369,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
                                                options_));
     proj_out_ = register_module(
         "proj_out",
-        DiTLinear(inner_dim, patch_size * patch_size * out_channels_, true));
+        DiTLinear(inner_dim, patch_size * patch_size * out_channels_, true,options_));
     proj_out_->weight.set_data(proj_out_->weight.to(options_));
     proj_out_->bias.set_data(proj_out_->bias.to(options_));
   }
