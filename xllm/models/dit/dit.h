@@ -39,9 +39,9 @@ inline torch::Tensor apply_rotary_emb(const torch::Tensor& x,
         torch::kBFloat16);  // [1, 1, 6542, 128]
   } else {
     cos = freqs_cis[0].unsqueeze(0).unsqueeze(2).to(
-        torch::kBFloat16);  // [1, 1, 6542, 128]
+        torch::kBFloat16);  // [1, 6542, 1, 128]
     sin = freqs_cis[1].unsqueeze(0).unsqueeze(2).to(
-        torch::kBFloat16);  // [1, 1, 6542, 128]
+        torch::kBFloat16);  // [1, 6542, 1, 128]
   }
 
   // std::vector<int64_t> reshape_shape;
