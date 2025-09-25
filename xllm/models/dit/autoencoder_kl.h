@@ -15,7 +15,7 @@
 #include "core/framework/dit_model_loader.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
-#include "dit_linear.h"
+#include "core/kernels/npu/xllm_ops/add_matmul.h"
 #include "framework/model_context.h"
 #include "models/model_registry.h"
 #include "processors/input_processor.h"
@@ -258,7 +258,8 @@ class AttentionImpl : public torch::nn::Module {
                 bool residual_connection = true,
                 bool bias = true,
                 bool upcast_softmax = true,
-                bool _from_deprecated_attn_block = false)
+                bool _from_deprecated_attn_block = false,
+                torch::TensorOptions options = torch::TensorOptions())
       : num_heads_(num_heads),
         rescale_output_factor_(rescale_output_factor),
         residual_connection_(residual_connection) {
@@ -280,10 +281,15 @@ class AttentionImpl : public torch::nn::Module {
                                                    .eps(eps)));
     }
     int64_t inner_dim = head_dim * num_heads;
-    to_q_ = register_module("to_q", DiTLinear(query_dim, inner_dim, true));
-    to_k_ = register_module("to_k", DiTLinear(query_dim, inner_dim, true));
-    to_v_ = register_module("to_v", DiTLinear(query_dim, inner_dim, true));
-    to_out_ = register_module("to_out", DiTLinear(inner_dim, query_dim, true));
+
+    to_q_ = register_module(
+        "to_q", xllm_ops::DiTLinear(query_dim, inner_dim, true, options));
+    to_k_ = register_module(
+        "to_k", xllm_ops::DiTLinear(query_dim, inner_dim, true, options));
+    to_v_ = register_module(
+        "to_v", xllm_ops::DiTLinear(query_dim, inner_dim, true, options));
+    to_out_ = register_module(
+        "to_out", xllm_ops::DiTLinear(inner_dim, query_dim, true, options));
   }
   torch::Tensor forward(torch::Tensor hidden_states, torch::Tensor temb) {
     torch::Tensor residual = hidden_states;
@@ -347,65 +353,17 @@ class AttentionImpl : public torch::nn::Module {
   }
   void load_state_dict(const StateDict& state_dict) {
     // to_q_
-    const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
-    if (to_q_state_bias.defined()) {
-      DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
-          << "to_q bias size mismatch: expected " << to_q_->bias.sizes()
-          << " but got " << to_q_state_bias.sizes();
-      to_q_->bias.data().copy_(to_q_state_bias);
-    }
-    const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
-    if (to_q_state_weight.defined()) {
-      DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
-          << "to_q weight size mismatch: expected " << to_q_->weight.sizes()
-          << " but got " << to_q_state_weight.sizes();
-      to_q_->weight.data().copy_(to_q_state_weight);
-    }
+    to_q_->load_state_dict(state_dict.get_dict_with_prefix("to_q."));
+
     // to_k_
-    const auto to_k_state_bias = state_dict.get_tensor("to_k.bias");
-    if (to_k_state_bias.defined()) {
-      DCHECK_EQ(to_k_->bias.sizes(), to_k_state_bias.sizes())
-          << "to_k bias size mismatch: expected " << to_k_->bias.sizes()
-          << " but got " << to_k_state_bias.sizes();
-      to_k_->bias.data().copy_(to_k_state_bias);
-    }
-    const auto to_k_state_weight = state_dict.get_tensor("to_k.weight");
-    if (to_k_state_weight.defined()) {
-      DCHECK_EQ(to_k_->weight.sizes(), to_k_state_weight.sizes())
-          << "to_k weight size mismatch: expected " << to_k_->weight.sizes()
-          << " but got " << to_k_state_weight.sizes();
-      to_k_->weight.data().copy_(to_k_state_weight);
-    }
+    to_k_->load_state_dict(state_dict.get_dict_with_prefix("to_k."));
+
     // to_v_
-    const auto to_v_state_bias = state_dict.get_tensor("to_v.bias");
-    if (to_v_state_bias.defined()) {
-      DCHECK_EQ(to_v_->bias.sizes(), to_v_state_bias.sizes())
-          << "to_v bias size mismatch: expected " << to_v_->bias.sizes()
-          << " but got " << to_v_state_bias.sizes();
-      to_v_->bias.data().copy_(to_v_state_bias);
-    }
-    const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
-    if (to_v_state_weight.defined()) {
-      DCHECK_EQ(to_v_->weight.sizes(), to_v_state_weight.sizes())
-          << "to_v weight size mismatch: expected " << to_v_->weight.sizes()
-          << " but got " << to_v_state_weight.sizes();
-      to_v_->weight.data().copy_(to_v_state_weight);
-    }
+    to_v_->load_state_dict(state_dict.get_dict_with_prefix("to_v."));
+
     // to_out_
-    const auto to_out_state_bias = state_dict.get_tensor("to_out.0.bias");
-    if (to_out_state_bias.defined()) {
-      DCHECK_EQ(to_out_->bias.sizes(), to_out_state_bias.sizes())
-          << "to_out bias size mismatch: expected " << to_out_->bias.sizes()
-          << " but got " << to_out_state_bias.sizes();
-      to_out_->bias.data().copy_(to_out_state_bias);
-    }
-    const auto to_out_state_weight = state_dict.get_tensor("to_out.0.weight");
-    if (to_out_state_weight.defined()) {
-      DCHECK_EQ(to_out_->weight.sizes(), to_out_state_weight.sizes())
-          << "to_out weight size mismatch: expected " << to_out_->weight.sizes()
-          << " but got " << to_out_state_weight.sizes();
-      to_out_->weight.data().copy_(to_out_state_weight);
-    }
+    to_out_->load_state_dict(state_dict.get_dict_with_prefix("to_out."));
+
     if (spatial_norm_) {
       spatial_norm_->load_state_dict(
           state_dict.get_dict_with_prefix("spatial_norm."));
@@ -436,10 +394,10 @@ class AttentionImpl : public torch::nn::Module {
  private:
   SpatialNorm spatial_norm_{nullptr};
   torch::nn::GroupNorm group_norm_{nullptr};
-  DiTLinear to_q_{nullptr};
-  DiTLinear to_k_{nullptr};
-  DiTLinear to_v_{nullptr};
-  DiTLinear to_out_{nullptr};
+  xllm_ops::DiTLinear to_q_{nullptr};
+  xllm_ops::DiTLinear to_k_{nullptr};
+  xllm_ops::DiTLinear to_v_{nullptr};
+  xllm_ops::DiTLinear to_out_{nullptr};
   int64_t num_heads_;
   bool residual_connection_;
   float rescale_output_factor_;
@@ -721,7 +679,8 @@ class ResnetBlock2DImpl : public torch::nn::Module {
                     float output_scale_factor = 1.0f,
                     c10::optional<bool> use_in_shortcut = c10::nullopt,
                     bool conv_shortcut_bias = true,
-                    c10::optional<int64_t> conv_2d_out_channels = c10::nullopt)
+                    c10::optional<int64_t> conv_2d_out_channels = c10::nullopt,
+                    torch::TensorOptions options = torch::TensorOptions())
       : pre_norm_(pre_norm),
         in_channels_(in_channels),
         out_channels_(out_channels.value_or(in_channels)),
@@ -756,7 +715,8 @@ class ResnetBlock2DImpl : public torch::nn::Module {
       }
       time_emb_proj_ = register_module(
           "time_emb_proj",
-          DiTLinear(temb_channels.value(), time_proj_out_channels));
+          xllm_ops::DiTLinear(
+              temb_channels.value(), time_proj_out_channels, true, options));
     }
 
     norm2_ =
@@ -860,24 +820,8 @@ class ResnetBlock2DImpl : public torch::nn::Module {
     }
     // time_emb_proj_
     if (time_emb_proj_) {
-      const auto time_emb_proj_weight =
-          state_dict.get_tensor("time_emb_proj.weight");
-      if (time_emb_proj_weight.defined()) {
-        DCHECK_EQ(time_emb_proj_->weight.sizes(), time_emb_proj_weight.sizes())
-            << "time_emb_proj weight size mismatch: expected "
-            << time_emb_proj_->weight.sizes() << " but got "
-            << time_emb_proj_weight.sizes();
-        time_emb_proj_->weight.data().copy_(time_emb_proj_weight);
-      }
-      const auto time_emb_proj_bias =
-          state_dict.get_tensor("time_emb_proj.bias");
-      if (time_emb_proj_bias.defined() && time_emb_proj_->bias.defined()) {
-        DCHECK_EQ(time_emb_proj_->bias.sizes(), time_emb_proj_bias.sizes())
-            << "time_emb_proj bias size mismatch: expected "
-            << time_emb_proj_->bias.sizes() << " but got "
-            << time_emb_proj_bias.sizes();
-        time_emb_proj_->bias.data().copy_(time_emb_proj_bias);
-      }
+      time_emb_proj_->load_state_dict(
+          state_dict.get_dict_with_prefix("time_emb_proj."));
     }
     // norm1_
     const auto norm1_weight = state_dict.get_tensor("norm1.weight");
@@ -959,7 +903,7 @@ class ResnetBlock2DImpl : public torch::nn::Module {
 
   torch::nn::GroupNorm norm1_{nullptr};
   torch::nn::Conv2d conv1_{nullptr};
-  DiTLinear time_emb_proj_{nullptr};
+  xllm_ops::DiTLinear time_emb_proj_{nullptr};
   torch::nn::GroupNorm norm2_{nullptr};
   torch::nn::Dropout dropout_{nullptr};
   torch::nn::Conv2d conv2_{nullptr};
@@ -990,7 +934,8 @@ class UNetMidBlock2DImpl : public torch::nn::Module {
                      bool resnet_pre_norm = true,
                      bool add_attention = true,
                      int64_t attention_head_dim = 512,
-                     float output_scale_factor = 1.0f) {
+                     float output_scale_factor = 1.0f,
+                     torch::TensorOptions options = torch::TensorOptions()) {
     resnets_ = register_module("resnets", torch::nn::ModuleList());
     attentions_ = register_module("attentions", torch::nn::ModuleList());
     int64_t adjusted_resnet_groups = resnet_groups;
@@ -1002,67 +947,67 @@ class UNetMidBlock2DImpl : public torch::nn::Module {
       attn_groups = adjusted_resnet_groups;
     }
     add_attention_ = add_attention;
-    resnets_->push_back(ResnetBlock2D(
-        in_channels,
-        in_channels,
-        false,  // conv_shortcut
-        dropout,
-        temb_channels,
-        adjusted_resnet_groups,
-        c10::nullopt,  // groups_out
-        resnet_pre_norm,
-        resnet_eps,
-        resnet_act_fn,
-        false,  // skip_time_act
-        resnet_time_scale_shift,
-        c10::nullopt,         // kernel
-        output_scale_factor,  // output_scale_factor
-        c10::nullopt,         // use_in_shortcut
-        true,                 // conv_shortcut_bias
-        c10::nullopt          // conv_2d_out_channels
-        ));
+    resnets_->push_back(
+        ResnetBlock2D(in_channels,
+                      in_channels,
+                      false,  // conv_shortcut
+                      dropout,
+                      temb_channels,
+                      adjusted_resnet_groups,
+                      c10::nullopt,  // groups_out
+                      resnet_pre_norm,
+                      resnet_eps,
+                      resnet_act_fn,
+                      false,  // skip_time_act
+                      resnet_time_scale_shift,
+                      c10::nullopt,         // kernel
+                      output_scale_factor,  // output_scale_factor
+                      c10::nullopt,         // use_in_shortcut
+                      true,                 // conv_shortcut_bias
+                      c10::nullopt,         // conv_2d_out_channels
+                      options));
     int64_t attn_head_dim = attention_head_dim;
     int64_t num_heads = in_channels / attn_head_dim;
     for (int64_t i = 0; i < num_layers; ++i) {
       if (add_attention_) {
-        attentions_->push_back(Attention(
-            in_channels,
-            num_heads,
-            attn_head_dim,
-            output_scale_factor,  // rescale_output_factor
-            resnet_eps,
-            attn_groups,  // norm_num_groups
-            (resnet_time_scale_shift == "spatial")
-                ? std::optional<int64_t>(temb_channels)
-                : std::nullopt,  // spatial_norm_dim
-            true,                // residual_connection
-            true,                // bias
-            true,                // upcast_softmax
-            true                 // _from_deprecated_attn_block
-            ));
+        attentions_->push_back(
+            Attention(in_channels,
+                      num_heads,
+                      attn_head_dim,
+                      output_scale_factor,  // rescale_output_factor
+                      resnet_eps,
+                      attn_groups,  // norm_num_groups
+                      (resnet_time_scale_shift == "spatial")
+                          ? std::optional<int64_t>(temb_channels)
+                          : std::nullopt,  // spatial_norm_dim
+                      true,                // residual_connection
+                      true,                // bias
+                      true,                // upcast_softmax
+                      true,                // _from_deprecated_attn_block
+                      options));
       } else {
         // Add an empty module as a placeholder.
         attentions_->push_back(torch::nn::Sequential());
       }
-      resnets_->push_back(ResnetBlock2D(
-          in_channels,
-          in_channels,
-          false,  // conv_shortcut
-          dropout,
-          temb_channels,
-          adjusted_resnet_groups,
-          c10::nullopt,  // groups_out
-          resnet_pre_norm,
-          resnet_eps,
-          resnet_act_fn,
-          false,  // skip_time_act
-          resnet_time_scale_shift,
-          c10::nullopt,         // kernel
-          output_scale_factor,  // output_scale_factor
-          c10::nullopt,         // use_in_shortcut
-          true,                 // conv_shortcut_bias
-          c10::nullopt          // conv_2d_out_channels
-          ));
+      resnets_->push_back(
+          ResnetBlock2D(in_channels,
+                        in_channels,
+                        false,  // conv_shortcut
+                        dropout,
+                        temb_channels,
+                        adjusted_resnet_groups,
+                        c10::nullopt,  // groups_out
+                        resnet_pre_norm,
+                        resnet_eps,
+                        resnet_act_fn,
+                        false,  // skip_time_act
+                        resnet_time_scale_shift,
+                        c10::nullopt,         // kernel
+                        output_scale_factor,  // output_scale_factor
+                        c10::nullopt,         // use_in_shortcut
+                        true,                 // conv_shortcut_bias
+                        c10::nullopt,         // conv_2d_out_channels
+                        options));
     }
   }
   torch::Tensor forward(const torch::Tensor& hidden_states,
@@ -1132,6 +1077,7 @@ class BaseDownEncoderBlockImpl : public torch::nn::Module {
   torch::nn::ModuleList downsamplers_{nullptr};  // List of downsamplers
 };
 TORCH_MODULE(BaseDownEncoderBlock);
+
 class BaseUpDecoderBlockImpl : public torch::nn::Module {
  public:
   /**
@@ -1165,19 +1111,21 @@ TORCH_MODULE(BaseUpDecoderBlock);
 
 class DownEncoderBlock2DImpl : public BaseDownEncoderBlockImpl {
  public:
-  DownEncoderBlock2DImpl(int64_t in_channels,
-                         int64_t out_channels,
-                         int64_t temb_channels,
-                         float dropout = 0.0f,
-                         int64_t num_layers = 1,
-                         float resnet_eps = 1e-6f,
-                         const std::string& resnet_time_scale_shift = "default",
-                         const std::string& resnet_act_fn = "swish",
-                         int64_t resnet_groups = 32,
-                         bool resnet_pre_norm = true,
-                         float output_scale_factor = 1.0f,
-                         bool add_downsample = true,
-                         int64_t downsample_padding = 1) {
+  DownEncoderBlock2DImpl(
+      int64_t in_channels,
+      int64_t out_channels,
+      int64_t temb_channels,
+      float dropout = 0.0f,
+      int64_t num_layers = 1,
+      float resnet_eps = 1e-6f,
+      const std::string& resnet_time_scale_shift = "default",
+      const std::string& resnet_act_fn = "swish",
+      int64_t resnet_groups = 32,
+      bool resnet_pre_norm = true,
+      float output_scale_factor = 1.0f,
+      bool add_downsample = true,
+      int64_t downsample_padding = 1,
+      torch::TensorOptions options = torch::TensorOptions()) {
     resnets_ = register_module("resnets", torch::nn::ModuleList());
     downsamplers_ = register_module("downsamplers", torch::nn::ModuleList());
     // initialize resnet blocks
@@ -1200,8 +1148,8 @@ class DownEncoderBlock2DImpl : public BaseDownEncoderBlockImpl {
                                         output_scale_factor,
                                         c10::nullopt,  // use_in_shortcut
                                         true,          // conv_shortcut_bias
-                                        c10::nullopt   // conv_2d_out_channels
-                                        ));
+                                        c10::nullopt,  // conv_2d_out_channels
+                                        options));
     }
 
     // initialize downsamplers if needed
@@ -1271,7 +1219,8 @@ class UpBlock2DImpl : public BaseUpDecoderBlockImpl {
                 int64_t resnet_groups = 32,
                 bool resnet_pre_norm = true,
                 float output_scale_factor = 1.0f,
-                bool add_upsample = true) {
+                bool add_upsample = true,
+                torch::TensorOptions options = torch::TensorOptions()) {
     resnets_ = register_module("resnets", torch::nn::ModuleList());
     upsamplers_ = register_module("upsamplers", torch::nn::ModuleList());
     for (int64_t i = 0; i < num_layers; ++i) {
@@ -1296,7 +1245,8 @@ class UpBlock2DImpl : public BaseUpDecoderBlockImpl {
                                         output_scale_factor,
                                         c10::nullopt,
                                         true,
-                                        c10::nullopt));
+                                        c10::nullopt,
+                                        options));
     }
     if (add_upsample) {
       upsamplers_->push_back(Upsample2D(out_channels,
@@ -1378,30 +1328,31 @@ class UpDecoderBlock2DImpl : public BaseUpDecoderBlockImpl {
                        bool resnet_pre_norm = true,
                        float output_scale_factor = 1.0f,
                        bool add_upsample = true,
-                       std::optional<int64_t> temb_channels = std::nullopt) {
+                       std::optional<int64_t> temb_channels = std::nullopt,
+                       torch::TensorOptions options = torch::TensorOptions()) {
     resnets_ = register_module("resnets", torch::nn::ModuleList());
 
     for (int64_t i = 0; i < num_layers; ++i) {
       int64_t input_channels = (i == 0) ? in_channels : out_channels;
-      resnets_->push_back(ResnetBlock2D(
-          input_channels,
-          out_channels,
-          false,  // conv_shortcut
-          dropout,
-          temb_channels.has_value() ? temb_channels.value() : 0,
-          resnet_groups,
-          c10::nullopt,  // groups_out
-          resnet_pre_norm,
-          resnet_eps,
-          resnet_act_fn,
-          false,  // skip_time_act
-          resnet_time_scale_shift,
-          c10::nullopt,  // kernel
-          output_scale_factor,
-          c10::nullopt,  // use_in_shortcut
-          true,          // conv_shortcut_bias
-          c10::nullopt   // conv_2d_out_channels
-          ));
+      resnets_->push_back(
+          ResnetBlock2D(input_channels,
+                        out_channels,
+                        false,  // conv_shortcut
+                        dropout,
+                        temb_channels.has_value() ? temb_channels.value() : 0,
+                        resnet_groups,
+                        c10::nullopt,  // groups_out
+                        resnet_pre_norm,
+                        resnet_eps,
+                        resnet_act_fn,
+                        false,  // skip_time_act
+                        resnet_time_scale_shift,
+                        c10::nullopt,  // kernel
+                        output_scale_factor,
+                        c10::nullopt,  // use_in_shortcut
+                        true,          // conv_shortcut_bias
+                        c10::nullopt,  // conv_2d_out_channels
+                        options));
     }
 
     if (add_upsample) {
@@ -1492,7 +1443,8 @@ inline std::shared_ptr<BaseDownEncoderBlockImpl> get_down_block(
     std::optional<std::string> cross_attention_norm = std::nullopt,
     std::optional<int> attention_head_dim = std::nullopt,
     std::optional<std::string> downsample_type = std::nullopt,
-    float dropout = 0.0f) {
+    float dropout = 0.0f,
+    torch::TensorOptions options = torch::TensorOptions()) {
   if (!attention_head_dim.has_value()) {
     std::cerr
         << "Warning: It is recommended to provide `attention_head_dim` when "
@@ -1524,7 +1476,8 @@ inline std::shared_ptr<BaseDownEncoderBlockImpl> get_down_block(
         is_downsample,  // add_downsample
         downsample_padding.has_value()
             ? static_cast<int64_t>(downsample_padding.value())
-            : 1);
+            : 1,
+        options);
   } else {
     throw std::invalid_argument(processed_block_type + " does not exist.");
   }
@@ -1559,7 +1512,8 @@ inline std::shared_ptr<BaseUpDecoderBlockImpl> get_up_block(
     std::optional<std::string> cross_attention_norm = std::nullopt,
     std::optional<int> attention_head_dim = std::nullopt,
     std::optional<std::string> upsample_type = std::nullopt,
-    float dropout = 0.0f) {
+    float dropout = 0.0f,
+    torch::TensorOptions options = torch::TensorOptions()) {
   // Handle default for attention_head_dim
   if (!attention_head_dim.has_value()) {
     std::cerr
@@ -1593,7 +1547,8 @@ inline std::shared_ptr<BaseUpDecoderBlockImpl> get_up_block(
         true,  // resnet_pre_norm
         resnet_out_scale_factor,
         add_upsample,
-        static_cast<int64_t>(temb_channels));
+        static_cast<int64_t>(temb_channels),
+        options);
   } else {
     throw std::invalid_argument(processed_block_type + " does not exist.");
   }
@@ -1692,6 +1647,7 @@ class VAEEncoderImpl : public torch::nn::Module {
   VAEEncoderImpl(const ModelContext& context) {
     ModelArgs args = context.get_model_args();
     down_blocks_ = register_module("down_blocks", torch::nn::ModuleList());
+    auto options = context.get_tensor_options();
     conv_in_ = register_module(
         "conv_in",
         torch::nn::Conv2d(
@@ -1732,8 +1688,8 @@ class VAEEncoderImpl : public torch::nn::Module {
                          std::nullopt,     // cross_attention_norm
                          output_channels,  // attention_head_dim
                          std::nullopt,     // downsample_type
-                         0.0f              // dropout
-          );
+                         0.0f,             // dropout
+                         options);
       down_blocks_->push_back(down_block);
     }
     // mid blocks
@@ -1751,7 +1707,8 @@ class VAEEncoderImpl : public torch::nn::Module {
                                        true,
                                        args.vae_mid_block_add_attention(),
                                        args.vae_block_out_channels().back(),
-                                       1.0f));
+                                       1.0f,
+                                       options));
     conv_norm_out_ = register_module(
         "conv_norm_out",
         torch::nn::GroupNorm(
@@ -1849,6 +1806,7 @@ class VAEDecoderImpl : public torch::nn::Module {
  public:
   VAEDecoderImpl(const ModelContext& context) {
     ModelArgs args = context.get_model_args();
+    auto options = context.get_tensor_options();
     up_blocks_ = register_module("up_blocks", torch::nn::ModuleList());
     conv_in_ = register_module(
         "conv_in",
@@ -1874,7 +1832,8 @@ class VAEDecoderImpl : public torch::nn::Module {
                                        true,
                                        args.vae_mid_block_add_attention(),
                                        args.vae_block_out_channels().back(),
-                                       1.0f));
+                                       1.0f,
+                                       options));
     // up blocks
     std::vector<int64_t> reversed_block_out_channels(
         args.vae_block_out_channels().rbegin(),
@@ -1912,8 +1871,8 @@ class VAEDecoderImpl : public torch::nn::Module {
                                    std::nullopt,    // cross_attention_norm
                                    output_channel,  // attention_head_dim
                                    std::nullopt,    // upsample_type
-                                   0.0f             // dropout
-      );
+                                   0.0f,            // dropout
+                                   options);
       up_blocks_->push_back(
           register_module("up_block_" + std::to_string(i), up_block));
       prev_output_channel = output_channel;
@@ -2195,6 +2154,7 @@ class VAEImpl : public torch::nn::Module {
 TORCH_MODULE(VAE);
 // register the VAE model with the model registry
 REGISTER_MODEL_ARGS(AutoencoderKL, [&] {
+  LOAD_ARG_OR(dtype, "dtype", "bfloat16");
   LOAD_ARG_OR(vae_in_channels, "in_channels", 3);
   LOAD_ARG_OR(vae_out_channels, "out_channels", 3);
   LOAD_ARG_OR(vae_down_block_types,
