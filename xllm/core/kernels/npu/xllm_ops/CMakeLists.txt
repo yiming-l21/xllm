@@ -7,10 +7,16 @@ cc_library(
     replace_token.h
     top_k_top_p.h
     acltensor_utils.h
+    rms_norm.h
+    add_matmul.h
+    add_batch_matmul.h
   SRCS
     replace_token.cpp
     top_k_top_p.cpp
     acltensor_utils.cpp
+    rms_norm.cpp
+    add_matmul.cpp
+    add_batch_matmul.cpp
   DEPS
     atb
     torch_npu
