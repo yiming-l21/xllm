@@ -13,31 +13,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "dit_executor.h"
+#pragma once
 
-#include <glog/logging.h>
+#include <torch/torch.h>
 
-#include "common/metrics.h"
-#include "dit_acl_graph_executor.h"
-#include "dit_npu_executor.h"
+#include <cstdint>
+#include <memory>
+
+#include "common/macros.h"
+#include "core/framework/dit_model_loader.h"
+#include "forward_params.h"
+#include "framework/batch/dit_batch.h"
+#include "framework/model/dit_model.h"
+#include "framework/model/model_input_params.h"
+#include "framework/request/dit_request_state.h"
+#include "runtime/options.h"
 
 namespace xllm {
 
-DiTExecutor::DiTExecutor(DiTModel* model, const runtime::Options& options) {
-  bool enable_alc_graph = options.enable_prefix_cache();
-  if (enable_alc_graph) {
-    impl_ = std::make_unique<DiTAclGraphExecutor>(model, options);
-  } else {
-    impl_ = std::make_unique<DiTNpuExecutor>(model, options);
-  }
-}
+class DiTExecutorImpl {
+ public:
+  virtual ~DiTExecutorImpl() = default;
 
-DiTForwardInput DiTExecutor::prepare_inputs(DiTBatch& batch) {
-  return impl_->prepare_inputs(batch);
-}
+  virtual DiTForwardInput prepare_inputs(DiTBatch& batch) = 0;
 
-DiTForwardOutput DiTExecutor::forward(const DiTForwardInput& input) {
-  return impl_->forward(input);
-}
+  virtual DiTForwardOutput forward(const DiTForwardInput& input) = 0;
+
+ private:
+};
 
 }  // namespace xllm

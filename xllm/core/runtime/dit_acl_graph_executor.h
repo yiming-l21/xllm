@@ -13,31 +13,31 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "dit_executor.h"
+#pragma once
 
-#include <glog/logging.h>
+#include <torch/torch.h>
 
-#include "common/metrics.h"
-#include "dit_acl_graph_executor.h"
-#include "dit_npu_executor.h"
+#include <cstdint>
+#include <memory>
+
+#include "core/runtime/dit_executor_impl.h"
 
 namespace xllm {
 
-DiTExecutor::DiTExecutor(DiTModel* model, const runtime::Options& options) {
-  bool enable_alc_graph = options.enable_prefix_cache();
-  if (enable_alc_graph) {
-    impl_ = std::make_unique<DiTAclGraphExecutor>(model, options);
-  } else {
-    impl_ = std::make_unique<DiTNpuExecutor>(model, options);
-  }
-}
+class DiTAclGraphExecutor : public DiTExecutorImpl {
+ public:
+  DiTAclGraphExecutor(DiTModel* model, const runtime::Options& options);
 
-DiTForwardInput DiTExecutor::prepare_inputs(DiTBatch& batch) {
-  return impl_->prepare_inputs(batch);
-}
+  ~DiTAclGraphExecutor() = default;
 
-DiTForwardOutput DiTExecutor::forward(const DiTForwardInput& input) {
-  return impl_->forward(input);
-}
+  DiTForwardInput prepare_inputs(DiTBatch& batch);
+
+  DiTForwardOutput forward(const DiTForwardInput& input);
+
+ private:
+  // not own
+  DiTModel* model_;
+  runtime::Options options_;
+};
 
 }  // namespace xllm

@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "common/macros.h"
 #include "core/framework/dit_model_loader.h"
+#include "core/runtime/dit_executor_impl.h"
 #include "forward_params.h"
 #include "framework/batch/dit_batch.h"
 #include "framework/model/dit_model.h"
@@ -42,9 +43,7 @@ class DiTExecutor {
   DiTForwardOutput forward(const DiTForwardInput& input);
 
  private:
-  // not own
-  DiTModel* model_;
-  runtime::Options options_;
+  std::unique_ptr<DiTExecutorImpl> impl_;
 };
 
 }  // namespace xllm

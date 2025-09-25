@@ -14,6 +14,9 @@ cc_library(
     executor_impl.h
     npu_executor_impl.h
     dit_executor.h
+    dit_executor_impl.h
+    dit_acl_graph_executor.h
+    dit_npu_executor.h
     worker.h
     worker_impl.h
     llm_worker_impl.h
@@ -33,6 +36,8 @@ cc_library(
     executor.cpp
     npu_executor_impl.cpp
     dit_executor.cpp
+    dit_acl_graph_executor.cpp
+    dit_npu_executor.cpp
     worker.cpp
     worker_impl.cpp
     llm_worker_impl.cpp
