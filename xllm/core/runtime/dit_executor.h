@@ -31,6 +31,8 @@ limitations under the License.
 
 namespace xllm {
 
+class DiTExecutorImpl;
+
 class DiTExecutor {
  public:
   DiTExecutor(DiTModel* model, const runtime::Options& options);
@@ -42,9 +44,7 @@ class DiTExecutor {
   DiTForwardOutput forward(const DiTForwardInput& input);
 
  private:
-  // not own
-  DiTModel* model_;
-  runtime::Options options_;
+  std::unique_ptr<ExecutorImpl> impl_;
 };
 
 }  // namespace xllm
