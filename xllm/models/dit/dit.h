@@ -15,9 +15,13 @@
 #include "core/framework/state_dict/state_dict.h"
 #include "dit_linear.h"
 #include "framework/model_context.h"
+#include "kernels/npu/xllm_ops/add_batch_matmul.h"
+#include "kernels/npu/xllm_ops/add_matmul.h"
+#include "kernels/npu/xllm_ops/rms_norm.h"
 #include "models/model_registry.h"
 #include "processors/input_processor.h"
 #include "processors/pywarpper_image_processor.h"
+#include "torch_npu/csrc/aten/CustomFunctions.h"
 // DiT model compatible with huggingface weights
 //   ref to:
 //   https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_flux.py
@@ -127,12 +131,12 @@ TORCH_MODULE(DiTRMSNorm);
 
 class FluxSingleAttentionImpl : public torch::nn::Module {
  private:
-  DiTLinear to_q_{nullptr};
-  DiTLinear to_k_{nullptr};
-  DiTLinear to_v_{nullptr};
+  xllm_ops::AddMatmul to_q_{nullptr};
+  xllm_ops::AddMatmul to_k_{nullptr};
+  xllm_ops::AddMatmul to_v_{nullptr};
   int64_t heads_;
-  DiTRMSNorm norm_q_{nullptr};
-  DiTRMSNorm norm_k_{nullptr};
+  xllm_ops::RMSNorm norm_q_{nullptr};
+  xllm_ops::RMSNorm norm_k_{nullptr};
   at::Device device_;
   at::ScalarType dtype_;
 
@@ -146,56 +150,11 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     // norm_k
     norm_k_->load_state_dict(state_dict.get_dict_with_prefix("norm_k."));
     // to_q
-    const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
-    if (to_q_state_weight.defined()) {
-      DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
-          << "to_q weight size mismatch: expected " << to_q_->weight.sizes()
-          << " but got " << to_q_state_weight.sizes();
-      to_q_->weight.data().copy_(to_q_state_weight);
-      to_q_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
-    if (to_q_state_bias.defined()) {
-      DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
-          << "to_q bias size mismatch: expected " << to_q_->bias.sizes()
-          << " but got " << to_q_state_bias.sizes();
-      to_q_->bias.data().copy_(to_q_state_bias);
-      to_q_->bias.data().to(dtype_).to(device_);
-    }
+    to_q_->load_state_dict(state_dict.get_dict_with_prefix("to_q."));
     // to_k
-    const auto to_k_state_weight = state_dict.get_tensor("to_k.weight");
-    if (to_k_state_weight.defined()) {
-      DCHECK_EQ(to_k_->weight.sizes(), to_k_state_weight.sizes())
-          << "to_k weight size mismatch: expected " << to_k_->weight.sizes()
-          << " but got " << to_k_state_weight.sizes();
-      to_k_->weight.data().copy_(to_k_state_weight);
-      to_k_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_k_state_bias = state_dict.get_tensor("to_k.bias");
-    if (to_k_state_bias.defined()) {
-      DCHECK_EQ(to_k_->bias.sizes(), to_k_state_bias.sizes())
-          << "to_k bias size mismatch: expected " << to_k_->bias.sizes()
-          << " but got " << to_k_state_bias.sizes();
-      to_k_->bias.data().copy_(to_k_state_bias);
-      to_k_->bias.data().to(dtype_).to(device_);
-    }
+    to_k_->load_state_dict(state_dict.get_dict_with_prefix("to_k."));
     // to_v
-    const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
-    if (to_v_state_weight.defined()) {
-      DCHECK_EQ(to_v_->weight.sizes(), to_v_state_weight.sizes())
-          << "to_v weight size mismatch: expected " << to_v_->weight.sizes()
-          << " but got " << to_v_state_weight.sizes();
-      to_v_->weight.data().copy_(to_v_state_weight);
-      to_v_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_v_state_bias = state_dict.get_tensor("to_v.bias");
-    if (to_v_state_bias.defined()) {
-      DCHECK_EQ(to_v_->bias.sizes(), to_v_state_bias.sizes())
-          << "to_v bias size mismatch: expected " << to_v_->bias.sizes()
-          << " but got " << to_v_state_bias.sizes();
-      to_v_->bias.data().copy_(to_v_state_bias);
-      to_v_->bias.data().to(dtype_).to(device_);
-    }
+    to_v_->load_state_dict(state_dict.get_dict_with_prefix("to_v."));
   }
   FluxSingleAttentionImpl(int64_t query_dim,
                           int64_t heads,
@@ -204,17 +163,25 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
                           const at::Device& device,
                           const at::ScalarType& dtype = torch::kBFloat16)
       : heads_(heads), device_(device), dtype_(dtype) {
-    to_q_ = register_module("to_q",
-                            DiTLinear(query_dim, out_dim, true /*has_bias*/));
-    to_k_ = register_module("to_k",
-                            DiTLinear(query_dim, out_dim, true /*has_bias*/));
-    to_v_ = register_module("to_v",
-                            DiTLinear(query_dim, out_dim, true /*has_bias*/));
+    to_q_ = register_module(
+        "to_q",
+        xllm_ops::AddMatmul(
+            query_dim, out_dim, true /*has_bias*/, device_, dtype_));
+    to_k_ = register_module(
+        "to_k",
+        xllm_ops::AddMatmul(
+            query_dim, out_dim, true /*has_bias*/, device_, dtype_));
+    to_v_ = register_module(
+        "to_v",
+        xllm_ops::AddMatmul(
+            query_dim, out_dim, true /*has_bias*/, device_, dtype_));
 
     norm_q_ = register_module(
-        "norm_q", DiTRMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
+        "norm_q",
+        xllm_ops::RMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
     norm_k_ = register_module(
-        "norm_k", DiTRMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
+        "norm_k",
+        xllm_ops::RMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states,
@@ -249,8 +216,24 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     query = apply_rotary_emb(query, image_rotary_emb);
     key = apply_rotary_emb(key, image_rotary_emb);
     // Compute scaled dot-product attention (no mask, no dropout)
-    torch::Tensor attn_output = torch::scaled_dot_product_attention(
-        query, key, value, torch::nullopt, 0.0, false);
+    // torch::Tensor attn_output = torch::scaled_dot_product_attention(
+    //    query, key, value, torch::nullopt, 0.0, false);
+    int64_t head_num_ = query.size(1);
+    int64_t head_dim_ = query.size(-1);
+    auto results =
+        at_npu::native::custom_ops::npu_fusion_attention(query,
+                                                         key,
+                                                         value,
+                                                         head_num_,
+                                                         "BNSD",
+                                                         torch::nullopt,
+                                                         torch::nullopt,
+                                                         torch::nullopt,
+                                                         pow(head_dim_, -0.5),
+                                                         1.0,
+                                                         65535,
+                                                         65535);
+    auto attn_output = std::get<0>(results);
     attn_output = attn_output.to(query.dtype());
     return attn_output.transpose(1, 2).flatten(2).to(dtype_);
   }
@@ -259,19 +242,19 @@ TORCH_MODULE(FluxSingleAttention);
 
 class FluxAttentionImpl : public torch::nn::Module {
  private:
-  DiTLinear to_q_{nullptr};
-  DiTLinear to_k_{nullptr};
-  DiTLinear to_v_{nullptr};
-  DiTLinear add_q_proj_{nullptr};
-  DiTLinear add_k_proj_{nullptr};
-  DiTLinear add_v_proj_{nullptr};
-  DiTLinear to_out_{nullptr};
-  DiTLinear to_add_out_{nullptr};
+  xllm_ops::AddMatmul to_q_{nullptr};
+  xllm_ops::AddMatmul to_k_{nullptr};
+  xllm_ops::AddMatmul to_v_{nullptr};
+  xllm_ops::AddMatmul add_q_proj_{nullptr};
+  xllm_ops::AddMatmul add_k_proj_{nullptr};
+  xllm_ops::AddMatmul add_v_proj_{nullptr};
+  xllm_ops::AddMatmul to_out_{nullptr};
+  xllm_ops::AddMatmul to_add_out_{nullptr};
   torch::nn::Dropout dropout_{nullptr};
-  DiTRMSNorm norm_q_{nullptr};
-  DiTRMSNorm norm_k_{nullptr};
-  DiTRMSNorm norm_added_q_{nullptr};
-  DiTRMSNorm norm_added_k_{nullptr};
+  xllm_ops::RMSNorm norm_q_{nullptr};
+  xllm_ops::RMSNorm norm_k_{nullptr};
+  xllm_ops::RMSNorm norm_added_q_{nullptr};
+  xllm_ops::RMSNorm norm_added_k_{nullptr};
   int64_t heads_;
   at::Device device_;
   at::ScalarType dtype_;
@@ -288,93 +271,25 @@ class FluxAttentionImpl : public torch::nn::Module {
     add_k_proj_->to(device_);
     add_v_proj_->to(device_);
     //  to_q
-    const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
-    if (to_q_state_weight.defined()) {
-      DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
-          << "to_q weight size mismatch: expected " << to_q_->weight.sizes()
-          << " but got " << to_q_state_weight.sizes();
-      to_q_->weight.data().copy_(to_q_state_weight);
-      to_q_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
-    if (to_q_state_bias.defined()) {
-      DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
-          << "to_q bias size mismatch: expected " << to_q_->bias.sizes()
-          << " but got " << to_q_state_bias.sizes();
-      to_q_->bias.data().copy_(to_q_state_bias);
-      to_q_->bias.data().to(dtype_).to(device_);
-    }
-    // to_k
-    const auto to_k_state_weight = state_dict.get_tensor("to_k.weight");
-    if (to_k_state_weight.defined()) {
-      DCHECK_EQ(to_k_->weight.sizes(), to_k_state_weight.sizes())
-          << "to_k weight size mismatch: expected " << to_k_->weight.sizes()
-          << " but got " << to_k_state_weight.sizes();
-      to_k_->weight.data().copy_(to_k_state_weight);
-      to_k_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_k_state_bias = state_dict.get_tensor("to_k.bias");
-    if (to_k_state_bias.defined()) {
-      DCHECK_EQ(to_k_->bias.sizes(), to_k_state_bias.sizes())
-          << "to_k bias size mismatch: expected " << to_k_->bias.sizes()
-          << " but got " << to_k_state_bias.sizes();
-      to_k_->bias.data().copy_(to_k_state_bias);
-      to_k_->bias.data().to(dtype_).to(device_);
-    }
-    // to_v
-    const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
-    if (to_v_state_weight.defined()) {
-      DCHECK_EQ(to_v_->weight.sizes(), to_v_state_weight.sizes())
-          << "to_v weight size mismatch: expected " << to_v_->weight.sizes()
-          << " but got " << to_v_state_weight.sizes();
-      to_v_->weight.data().copy_(to_v_state_weight);
-      to_v_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_v_state_bias = state_dict.get_tensor("to_v.bias");
-    if (to_v_state_bias.defined()) {
-      DCHECK_EQ(to_v_->bias.sizes(), to_v_state_bias.sizes())
-          << "to_v bias size mismatch: expected " << to_v_->bias.sizes()
-          << " but got " << to_v_state_bias.sizes();
-      to_v_->bias.data().copy_(to_v_state_bias);
-      to_v_->bias.data().to(dtype_).to(device_);
-    }
-    // to_out
-    const auto to_out_state_weight = state_dict.get_tensor("to_out.0.weight");
-    if (to_out_state_weight.defined()) {
-      DCHECK_EQ(to_out_->weight.sizes(), to_out_state_weight.sizes())
-          << "to_out weight size mismatch: expected " << to_out_->weight.sizes()
-          << " but got " << to_out_state_weight.sizes();
-      to_out_->weight.data().copy_(to_out_state_weight);
-      to_out_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_out_state_bias = state_dict.get_tensor("to_out.0.bias");
-    if (to_out_state_bias.defined()) {
-      DCHECK_EQ(to_out_->bias.sizes(), to_out_state_bias.sizes())
-          << "to_out bias size mismatch: expected " << to_out_->bias.sizes()
-          << " but got " << to_out_state_bias.sizes();
-      to_out_->bias.data().copy_(to_out_state_bias);
-      to_out_->bias.data().to(dtype_).to(device_);
-    }
-    // to_add_out
-    const auto to_add_out_state_weight =
-        state_dict.get_tensor("to_add_out.weight");
-    if (to_add_out_state_weight.defined()) {
-      DCHECK_EQ(to_add_out_->weight.sizes(), to_add_out_state_weight.sizes())
-          << "to_add_out weight size mismatch: expected "
-          << to_add_out_->weight.sizes() << " but got "
-          << to_add_out_state_weight.sizes();
-      to_add_out_->weight.data().copy_(to_add_out_state_weight);
-      to_add_out_->weight.data().to(dtype_).to(device_);
-    }
-    const auto to_add_out_state_bias = state_dict.get_tensor("to_add_out.bias");
-    if (to_add_out_state_bias.defined()) {
-      DCHECK_EQ(to_add_out_->bias.sizes(), to_add_out_state_bias.sizes())
-          << "to_add_out bias size mismatch: expected "
-          << to_add_out_->bias.sizes() << " but got "
-          << to_add_out_state_bias.sizes();
-      to_add_out_->bias.data().copy_(to_add_out_state_bias);
-      to_add_out_->bias.data().to(dtype_).to(device_);
-    }
+    to_q_->load_state_dict(state_dict.get_dict_with_prefix("to_q."));
+    //  to_k
+    to_k_->load_state_dict(state_dict.get_dict_with_prefix("to_k."));
+    //  to_v
+    to_v_->load_state_dict(state_dict.get_dict_with_prefix("to_v."));
+    //  to_out
+    to_out_->load_state_dict(state_dict.get_dict_with_prefix("to_out.0."));
+    //  to_add_out
+    to_add_out_->load_state_dict(
+        state_dict.get_dict_with_prefix("to_add_out."));
+    //  add_q_proj
+    add_q_proj_->load_state_dict(
+        state_dict.get_dict_with_prefix("add_q_proj."));
+    //  add_k_proj
+    add_k_proj_->load_state_dict(
+        state_dict.get_dict_with_prefix("add_k_proj."));
+    //  add_v_proj
+    add_v_proj_->load_state_dict(
+        state_dict.get_dict_with_prefix("add_v_proj."));
     // norm_q
     norm_q_->load_state_dict(state_dict.get_dict_with_prefix("norm_q."));
     // norm_k
@@ -385,66 +300,6 @@ class FluxAttentionImpl : public torch::nn::Module {
     // norm_added_k
     norm_added_k_->load_state_dict(
         state_dict.get_dict_with_prefix("norm_added_k."));
-    // add_q_proj
-    const auto add_q_proj_state_weight =
-        state_dict.get_tensor("add_q_proj.weight");
-    if (add_q_proj_state_weight.defined()) {
-      DCHECK_EQ(add_q_proj_->weight.sizes(), add_q_proj_state_weight.sizes())
-          << "add_q_proj weight size mismatch: expected "
-          << add_q_proj_->weight.sizes() << " but got "
-          << add_q_proj_state_weight.sizes();
-      add_q_proj_->weight.data().copy_(add_q_proj_state_weight);
-      add_q_proj_->weight.data().to(dtype_).to(device_);
-    }
-    const auto add_q_proj_state_bias = state_dict.get_tensor("add_q_proj.bias");
-    if (add_q_proj_state_bias.defined()) {
-      DCHECK_EQ(add_q_proj_->bias.sizes(), add_q_proj_state_bias.sizes())
-          << "add_q_proj bias size mismatch: expected "
-          << add_q_proj_->bias.sizes() << " but got "
-          << add_q_proj_state_bias.sizes();
-      add_q_proj_->bias.data().copy_(add_q_proj_state_bias);
-      add_q_proj_->bias.data().to(dtype_).to(device_);
-    }
-    // add_k_proj
-    const auto add_k_proj_state_weight =
-        state_dict.get_tensor("add_k_proj.weight");
-    if (add_k_proj_state_weight.defined()) {
-      DCHECK_EQ(add_k_proj_->weight.sizes(), add_k_proj_state_weight.sizes())
-          << "add_k_proj weight size mismatch: expected "
-          << add_k_proj_->weight.sizes() << " but got "
-          << add_k_proj_state_weight.sizes();
-      add_k_proj_->weight.data().copy_(add_k_proj_state_weight);
-      add_k_proj_->weight.data().to(dtype_).to(device_);
-    }
-    const auto add_k_proj_state_bias = state_dict.get_tensor("add_k_proj.bias");
-    if (add_k_proj_state_bias.defined()) {
-      DCHECK_EQ(add_k_proj_->bias.sizes(), add_k_proj_state_bias.sizes())
-          << "add_k_proj bias size mismatch: expected "
-          << add_k_proj_->bias.sizes() << " but got "
-          << add_k_proj_state_bias.sizes();
-      add_k_proj_->bias.data().copy_(add_k_proj_state_bias);
-      add_k_proj_->bias.data().to(dtype_).to(device_);
-    }
-    // add_v_proj
-    const auto add_v_proj_state_weight =
-        state_dict.get_tensor("add_v_proj.weight");
-    if (add_v_proj_state_weight.defined()) {
-      DCHECK_EQ(add_v_proj_->weight.sizes(), add_v_proj_state_weight.sizes())
-          << "add_v_proj weight size mismatch: expected "
-          << add_v_proj_->weight.sizes() << " but got "
-          << add_v_proj_state_weight.sizes();
-      add_v_proj_->weight.data().copy_(add_v_proj_state_weight);
-      add_v_proj_->weight.data().to(dtype_).to(device_);
-    }
-    const auto add_v_proj_state_bias = state_dict.get_tensor("add_v_proj.bias");
-    if (add_v_proj_state_bias.defined()) {
-      DCHECK_EQ(add_v_proj_->bias.sizes(), add_v_proj_state_bias.sizes())
-          << "add_v_proj bias size mismatch: expected "
-          << add_v_proj_->bias.sizes() << " but got "
-          << add_v_proj_state_bias.sizes();
-      add_v_proj_->bias.data().copy_(add_v_proj_state_bias);
-      add_v_proj_->bias.data().to(dtype_).to(device_);
-    }
   }
   FluxAttentionImpl(int64_t query_dim,
                     int64_t heads,
@@ -454,35 +309,46 @@ class FluxAttentionImpl : public torch::nn::Module {
                     at::Device device,
                     const at::ScalarType& dtype = torch::kBFloat16)
       : heads_(heads), device_(device), dtype_(dtype) {
-    to_q_ = register_module("to_q", DiTLinear(query_dim, out_dim, true));
-    to_k_ = register_module("to_k", DiTLinear(query_dim, out_dim, true));
-    to_v_ = register_module("to_v", DiTLinear(query_dim, out_dim, true));
-    add_q_proj_ = register_module("add_q_proj",
-                                  DiTLinear(added_kv_proj_dim, out_dim, true));
+    to_q_ = register_module(
+        "to_q", xllm_ops::AddMatmul(query_dim, out_dim, true, device_, dtype_));
+    to_k_ = register_module(
+        "to_k", xllm_ops::AddMatmul(query_dim, out_dim, true, device_, dtype_));
+    to_v_ = register_module(
+        "to_v", xllm_ops::AddMatmul(query_dim, out_dim, true, device_, dtype_));
+    add_q_proj_ = register_module(
+        "add_q_proj",
+        xllm_ops::AddMatmul(added_kv_proj_dim, out_dim, true, device_, dtype_));
 
-    add_k_proj_ = register_module("add_k_proj",
-                                  DiTLinear(added_kv_proj_dim, out_dim, true));
+    add_k_proj_ = register_module(
+        "add_k_proj",
+        xllm_ops::AddMatmul(added_kv_proj_dim, out_dim, true, device_, dtype_));
 
-    add_v_proj_ = register_module("add_v_proj",
-                                  DiTLinear(added_kv_proj_dim, out_dim, true));
+    add_v_proj_ = register_module(
+        "add_v_proj",
+        xllm_ops::AddMatmul(added_kv_proj_dim, out_dim, true, device_, dtype_));
 
-    to_out_ = register_module("to_out", DiTLinear(out_dim, query_dim, true));
+    to_out_ = register_module(
+        "to_out",
+        xllm_ops::AddMatmul(out_dim, query_dim, true, device_, dtype_));
 
-    to_add_out_ = register_module("to_add_out",
-                                  DiTLinear(out_dim, added_kv_proj_dim, true));
+    to_add_out_ = register_module(
+        "to_add_out",
+        xllm_ops::AddMatmul(out_dim, added_kv_proj_dim, true, device_, dtype_));
 
     dropout_ = register_module("dropout", torch::nn::Dropout(0.1));
 
     norm_q_ = register_module(
-        "norm_q", DiTRMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
+        "norm_q",
+        xllm_ops::RMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
     norm_k_ = register_module(
-        "norm_k", DiTRMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
+        "norm_k",
+        xllm_ops::RMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
     norm_added_q_ = register_module(
         "norm_added_q",
-        DiTRMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
+        xllm_ops::RMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
     norm_added_k_ = register_module(
         "norm_added_k",
-        DiTRMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
+        xllm_ops::RMSNorm(head_dim, 1e-6f, true, false, device_, dtype_));
   }
   std::tuple<torch::Tensor, torch::Tensor> forward(
       const torch::Tensor& hidden_states,
@@ -558,8 +424,24 @@ class FluxAttentionImpl : public torch::nn::Module {
       query1 = apply_rotary_emb(query1, image_rotary_emb);
       key1 = apply_rotary_emb(key1, image_rotary_emb);
     }
-    torch::Tensor attn_output = torch::scaled_dot_product_attention(
-        query1, key1, value1, torch::nullopt, 0.0, false);
+    // torch::Tensor attn_output = torch::scaled_dot_product_attention(
+    //     query1, key1, value1, torch::nullopt, 0.0, false);
+    int64_t head_num_ = query1.size(1);
+    int64_t head_dim_ = query1.size(-1);
+    auto results =
+        at_npu::native::custom_ops::npu_fusion_attention(query1,
+                                                         key1,
+                                                         value1,
+                                                         head_num_,
+                                                         "BNSD",
+                                                         torch::nullopt,
+                                                         torch::nullopt,
+                                                         torch::nullopt,
+                                                         pow(head_dim_, -0.5),
+                                                         1.0,
+                                                         65535,
+                                                         65535);
+    auto attn_output = std::get<0>(results);
 
     attn_output = attn_output
                       .transpose(1, 2)  // [B, H, S, D]
