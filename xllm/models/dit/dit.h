@@ -27,12 +27,23 @@
 //   https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_flux.py
 namespace xllm {
 inline torch::Tensor apply_rotary_emb(const torch::Tensor& x,
-                                      const torch::Tensor& freqs_cis) {
+                                      const torch::Tensor& freqs_cis,
+                                      bool head_first = true) {
   // assume freqs_cis is [2, S, D]，[0] is cos，[1] is sin
-  auto cos = freqs_cis[0].unsqueeze(0).unsqueeze(1).to(
-      torch::kBFloat16);  // [1, 1, 6542, 128]
-  auto sin = freqs_cis[1].unsqueeze(0).unsqueeze(1).to(
-      torch::kBFloat16);  // [1, 1, 6542, 128]
+  torch::Tensor cos;
+  torch::Tensor sin;
+  if (head_first) {
+    cos = freqs_cis[0].unsqueeze(0).unsqueeze(1).to(
+        torch::kBFloat16);  // [1, 1, 6542, 128]
+    sin = freqs_cis[1].unsqueeze(0).unsqueeze(1).to(
+        torch::kBFloat16);  // [1, 1, 6542, 128]
+  } else {
+    cos = freqs_cis[0].unsqueeze(0).unsqueeze(2).to(
+        torch::kBFloat16);  // [1, 1, 6542, 128]
+    sin = freqs_cis[1].unsqueeze(0).unsqueeze(2).to(
+        torch::kBFloat16);  // [1, 1, 6542, 128]
+  }
+
   // std::vector<int64_t> reshape_shape;
   // for (int64_t i = 0; i < x.dim() - 1; ++i) {
   //   reshape_shape.push_back(x.size(i));
@@ -209,33 +220,27 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     int64_t inner_dim = key.size(-1);
     int64_t attn_heads = heads_;
     int64_t head_dim = inner_dim / attn_heads;
-    query = query.view({batch_size, -1, attn_heads, head_dim})
-                .transpose(1, 2)
-                .contiguous();
-    key = key.view({batch_size, -1, attn_heads, head_dim})
-              .transpose(1, 2)
-              .contiguous();
-    value = value.view({batch_size, -1, attn_heads, head_dim})
-                .transpose(1, 2)
-                .contiguous();
+    query = query.view({batch_size, -1, attn_heads, head_dim}).contiguous();
+    key = key.view({batch_size, -1, attn_heads, head_dim}).contiguous();
+    value = value.view({batch_size, -1, attn_heads, head_dim}).contiguous();
 
     // Apply Q/K normalization if enabled
     if (norm_q_) query = norm_q_->forward(query);
     if (norm_k_) key = norm_k_->forward(key);
     // Apply rotary positional embedding
-    query = apply_rotary_emb(query, image_rotary_emb);
-    key = apply_rotary_emb(key, image_rotary_emb);
+    query = apply_rotary_emb(query, image_rotary_emb, false);
+    key = apply_rotary_emb(key, image_rotary_emb, false);
     // Compute scaled dot-product attention (no mask, no dropout)
     // torch::Tensor attn_output = torch::scaled_dot_product_attention(
     //    query, key, value, torch::nullopt, 0.0, false);
-    int64_t head_num_ = query.size(1);
+    int64_t head_num_ = query.size(2);
     int64_t head_dim_ = query.size(-1);
     auto results =
         at_npu::native::custom_ops::npu_fusion_attention(query,
                                                          key,
                                                          value,
                                                          head_num_,
-                                                         "BNSD",
+                                                         "BSND",
                                                          torch::nullopt,
                                                          torch::nullopt,
                                                          torch::nullopt,
@@ -245,7 +250,7 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
                                                          65535);
     auto attn_output = std::get<0>(results);
     attn_output = attn_output.to(query.dtype());
-    return attn_output.transpose(1, 2).flatten(2).to(dtype_);
+    return attn_output.flatten(2).to(dtype_);
   }
 };
 TORCH_MODULE(FluxSingleAttention);
@@ -395,9 +400,9 @@ class FluxAttentionImpl : public torch::nn::Module {
     int64_t inner_dim = key.size(-1);
     int64_t attn_heads = heads_;
     int64_t head_dim = inner_dim / attn_heads;
-    query = query.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
-    key = key.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
-    value = value.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
+    query = query.view({batch_size, -1, attn_heads, head_dim});
+    key = key.view({batch_size, -1, attn_heads, head_dim});
+    value = value.view({batch_size, -1, attn_heads, head_dim});
     if (norm_q_) query = norm_q_->forward(query);
     if (norm_k_) key = norm_k_->forward(key);
     // encoder hidden states
@@ -407,18 +412,12 @@ class FluxAttentionImpl : public torch::nn::Module {
         add_k_proj_->forward(encoder_hidden_states_reshaped);
     torch::Tensor encoder_hidden_states_value_proj =
         add_v_proj_->forward(encoder_hidden_states_reshaped);
-    encoder_hidden_states_query_proj =
-        encoder_hidden_states_query_proj
-            .view({batch_size, -1, attn_heads, head_dim})
-            .transpose(1, 2);
-    encoder_hidden_states_key_proj =
-        encoder_hidden_states_key_proj
-            .view({batch_size, -1, attn_heads, head_dim})
-            .transpose(1, 2);
-    encoder_hidden_states_value_proj =
-        encoder_hidden_states_value_proj
-            .view({batch_size, -1, attn_heads, head_dim})
-            .transpose(1, 2);
+    encoder_hidden_states_query_proj = encoder_hidden_states_query_proj.view(
+        {batch_size, -1, attn_heads, head_dim});
+    encoder_hidden_states_key_proj = encoder_hidden_states_key_proj.view(
+        {batch_size, -1, attn_heads, head_dim});
+    encoder_hidden_states_value_proj = encoder_hidden_states_value_proj.view(
+        {batch_size, -1, attn_heads, head_dim});
     if (norm_added_q_)
       encoder_hidden_states_query_proj =
           norm_added_q_->forward(encoder_hidden_states_query_proj);
@@ -428,25 +427,25 @@ class FluxAttentionImpl : public torch::nn::Module {
     // TODO some are right some are wrong query1& key1.
     // encoder_hidden_states_query_proj
     auto query1 =
-        torch::cat({encoder_hidden_states_query_proj, query}, 2).contiguous();
+        torch::cat({encoder_hidden_states_query_proj, query}, 1).contiguous();
     auto key1 =
-        torch::cat({encoder_hidden_states_key_proj, key}, 2).contiguous();
+        torch::cat({encoder_hidden_states_key_proj, key}, 1).contiguous();
     auto value1 =
-        torch::cat({encoder_hidden_states_value_proj, value}, 2).contiguous();
+        torch::cat({encoder_hidden_states_value_proj, value}, 1).contiguous();
     if (image_rotary_emb.defined()) {
-      query1 = apply_rotary_emb(query1, image_rotary_emb);
-      key1 = apply_rotary_emb(key1, image_rotary_emb);
+      query1 = apply_rotary_emb(query1, image_rotary_emb, false);
+      key1 = apply_rotary_emb(key1, image_rotary_emb, false);
     }
     // torch::Tensor attn_output = torch::scaled_dot_product_attention(
     //     query1, key1, value1, torch::nullopt, 0.0, false);
-    int64_t head_num_ = query1.size(1);
+    int64_t head_num_ = query1.size(2);
     int64_t head_dim_ = query1.size(-1);
     auto results =
         at_npu::native::custom_ops::npu_fusion_attention(query1,
                                                          key1,
                                                          value1,
                                                          head_num_,
-                                                         "BNSD",
+                                                         "BSND",
                                                          torch::nullopt,
                                                          torch::nullopt,
                                                          torch::nullopt,
@@ -456,9 +455,7 @@ class FluxAttentionImpl : public torch::nn::Module {
                                                          65535);
     auto attn_output = std::get<0>(results);
 
-    attn_output = attn_output
-                      .transpose(1, 2)  // [B, H, S, D]
-                      .reshape({batch_size, -1, attn_heads * head_dim});
+    attn_output = attn_output.reshape({batch_size, -1, attn_heads * head_dim});
     attn_output = attn_output.to(query.dtype());
 
     int64_t encoder_length = encoder_hidden_states_reshaped.size(1);
