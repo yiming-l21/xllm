@@ -29,23 +29,27 @@ namespace xllm {
 inline torch::Tensor apply_rotary_emb(const torch::Tensor& x,
                                       const torch::Tensor& freqs_cis) {
   // assume freqs_cis is [2, S, D]，[0] is cos，[1] is sin
-  auto cos = freqs_cis[0].unsqueeze(0).unsqueeze(1);  // [1, 1, 6542, 128]
-  auto sin = freqs_cis[1].unsqueeze(0).unsqueeze(1);  // [1, 1, 6542, 128]
-  std::vector<int64_t> reshape_shape;
-  for (int64_t i = 0; i < x.dim() - 1; ++i) {
-    reshape_shape.push_back(x.size(i));
-  }
-  reshape_shape.push_back(-1);
-  reshape_shape.push_back(2);
-  torch::Tensor reshaped = x.reshape(reshape_shape);
-  torch::Tensor x_real = reshaped.select(-1, 0);
-  torch::Tensor x_imag = reshaped.select(-1, 1);
-  // x_rotated = [-x_imag, x_real]
-  torch::Tensor neg_x_imag = -x_imag;
-  auto x_rotated = torch::stack({neg_x_imag, x_real}, -1).flatten(3);
-  return (x.to(torch::kFloat32) * cos.to(torch::kFloat32) +
-          x_rotated.to(torch::kFloat32) * sin.to(torch::kFloat32))
-      .to(x.dtype());
+  auto cos = freqs_cis[0].unsqueeze(0).unsqueeze(1).to(
+      torch::kBFloat16);  // [1, 1, 6542, 128]
+  auto sin = freqs_cis[1].unsqueeze(0).unsqueeze(1).to(
+      torch::kBFloat16);  // [1, 1, 6542, 128]
+  // std::vector<int64_t> reshape_shape;
+  // for (int64_t i = 0; i < x.dim() - 1; ++i) {
+  //   reshape_shape.push_back(x.size(i));
+  // }
+  // reshape_shape.push_back(-1);
+  // reshape_shape.push_back(2);
+  // torch::Tensor reshaped = x.reshape(reshape_shape);
+
+  // torch::Tensor x_real = reshaped.select(-1, 0);
+  // torch::Tensor x_imag = reshaped.select(-1, 1);
+  //  x_rotated = [-x_imag, x_real]
+  // torch::Tensor neg_x_imag = -x_imag;
+  // auto x_rotated = torch::stack({neg_x_imag, x_real}, -1).flatten(3);
+  // return (x.to(torch::kFloat32) * cos.to(torch::kFloat32) +
+  //         x_rotated.to(torch::kFloat32) * sin.to(torch::kFloat32))
+  //     .to(x.dtype());
+  return at_npu::native::custom_ops::npu_rope(x, cos, sin, 1);
 }
 class DiTRMSNormImpl : public torch::nn::Module {
  public:
@@ -205,9 +209,15 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     int64_t inner_dim = key.size(-1);
     int64_t attn_heads = heads_;
     int64_t head_dim = inner_dim / attn_heads;
-    query = query.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
-    key = key.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
-    value = value.view({batch_size, -1, attn_heads, head_dim}).transpose(1, 2);
+    query = query.view({batch_size, -1, attn_heads, head_dim})
+                .transpose(1, 2)
+                .contiguous();
+    key = key.view({batch_size, -1, attn_heads, head_dim})
+              .transpose(1, 2)
+              .contiguous();
+    value = value.view({batch_size, -1, attn_heads, head_dim})
+                .transpose(1, 2)
+                .contiguous();
 
     // Apply Q/K normalization if enabled
     if (norm_q_) query = norm_q_->forward(query);
@@ -417,9 +427,12 @@ class FluxAttentionImpl : public torch::nn::Module {
           norm_added_k_->forward(encoder_hidden_states_key_proj);
     // TODO some are right some are wrong query1& key1.
     // encoder_hidden_states_query_proj
-    auto query1 = torch::cat({encoder_hidden_states_query_proj, query}, 2);
-    auto key1 = torch::cat({encoder_hidden_states_key_proj, key}, 2);
-    auto value1 = torch::cat({encoder_hidden_states_value_proj, value}, 2);
+    auto query1 =
+        torch::cat({encoder_hidden_states_query_proj, query}, 2).contiguous();
+    auto key1 =
+        torch::cat({encoder_hidden_states_key_proj, key}, 2).contiguous();
+    auto value1 =
+        torch::cat({encoder_hidden_states_value_proj, value}, 2).contiguous();
     if (image_rotary_emb.defined()) {
       query1 = apply_rotary_emb(query1, image_rotary_emb);
       key1 = apply_rotary_emb(key1, image_rotary_emb);
@@ -1015,6 +1028,9 @@ class AdaLayerNormZeroImpl : public torch::nn::Module {
   }
   void load_state_dict(const StateDict& state_dict) {
     linear_->to(device_);
+    // linear_->load_state_dict(
+    //     state_dict.get_dict_with_prefix("linear."));
+
     //  linear
     const auto linear_weight = state_dict.get_tensor("linear.weight");
     if (linear_weight.defined()) {
@@ -1197,12 +1213,15 @@ class FeedForwardImpl : public torch::nn::Module {
     // linear1
     linear1_ = register_module(
         "linear1",
-        DiTLinear(dim,
-                  activation_fn == "geglu" || activation_fn == "swiglu" ||
-                          activation_fn == "geglu-approximate"
-                      ? inner_dim * 2
-                      : inner_dim,
-                  bias));
+        xllm_ops::AddMatmul(dim,
+                            activation_fn == "geglu" ||
+                                    activation_fn == "swiglu" ||
+                                    activation_fn == "geglu-approximate"
+                                ? inner_dim * 2
+                                : inner_dim,
+                            bias,
+                            device,
+                            dtype));
 
     // activation
     if (activation_fn == "gelu") {
@@ -1223,8 +1242,9 @@ class FeedForwardImpl : public torch::nn::Module {
     dropout1_ = register_module("dropout1", torch::nn::Dropout(dropout));
 
     // linear2
-    linear2_ =
-        register_module("linear2", DiTLinear(inner_dim, dim_out, out_bias));
+    linear2_ = register_module(
+        "linear2",
+        xllm_ops::AddMatmul(inner_dim, dim_out, out_bias, device, dtype));
 
     // Dropout
     if (final_dropout) {
@@ -1244,42 +1264,15 @@ class FeedForwardImpl : public torch::nn::Module {
   void load_state_dict(const StateDict& state_dict) {
     linear1_->to(device_);
     linear2_->to(device_);
-    const auto linear1_weight = state_dict.get_tensor("net.0.proj.weight");
-    if (linear1_weight.defined()) {
-      DCHECK_EQ(linear1_weight.sizes(), linear1_->weight.sizes())
-          << "linear1 weight size mismatch";
-      linear1_->weight.data().copy_(linear1_weight);
-      linear1_->weight.to(dtype_).to(device_);
-    }
-    const auto linear1_bias = state_dict.get_tensor("net.0.proj.bias");
-    if (linear1_bias.defined()) {
-      DCHECK_EQ(linear1_bias.sizes(), linear1_->bias.sizes())
-          << "linear1 bias size mismatch";
-      linear1_->bias.data().copy_(linear1_bias);
-      linear1_->bias.data().to(dtype_).to(device_);
-    }
-    // linear2
-    const auto linear2_weight = state_dict.get_tensor("net.2.weight");
-    if (linear2_weight.defined()) {
-      DCHECK_EQ(linear2_weight.sizes(), linear2_->weight.sizes())
-          << "linear2 weight size mismatch";
-      linear2_->weight.data().copy_(linear2_weight);
-      linear2_->weight.data().to(dtype_).to(device_);
-    }
-    const auto linear2_bias = state_dict.get_tensor("net.2.bias");
-    if (linear2_bias.defined()) {
-      DCHECK_EQ(linear2_bias.sizes(), linear2_->bias.sizes())
-          << "linear2 bias size mismatch";
-      linear2_->bias.data().copy_(linear2_bias);
-      linear2_->bias.data().to(dtype_).to(device_);
-    }
+    linear1_->load_state_dict(state_dict.get_dict_with_prefix("net.0.proj."));
+    linear2_->load_state_dict(state_dict.get_dict_with_prefix("net.2."));
   }
 
  private:
-  DiTLinear linear1_{nullptr};
+  xllm_ops::AddMatmul linear1_{nullptr};
   torch::nn::Functional activation_{nullptr};
   torch::nn::Dropout dropout1_{nullptr};
-  DiTLinear linear2_{nullptr};
+  xllm_ops::AddMatmul linear2_{nullptr};
   torch::nn::Dropout dropout2_{nullptr};  // optional
   at::Device device_;
   at::ScalarType dtype_;
@@ -1300,12 +1293,14 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
         "norm", AdaLayerNormZeroSingle(dim, "layer_norm", true, device, dtype));
 
     int64_t mlp_out_dim = mlp_hidden_dim_;
-    proj_mlp_ = register_module("proj_mlp", DiTLinear(dim, mlp_out_dim, true));
+    proj_mlp_ = register_module(
+        "proj_mlp", xllm_ops::AddMatmul(dim, mlp_out_dim, true, device, dtype));
 
     int64_t proj_in_dim = dim + mlp_hidden_dim_;
     int64_t proj_out_dim = dim;
-    proj_out_ =
-        register_module("proj_out", DiTLinear(proj_in_dim, proj_out_dim, true));
+    proj_out_ = register_module(
+        "proj_out",
+        xllm_ops::AddMatmul(proj_in_dim, proj_out_dim, true, device, dtype));
 
     act_mlp_ =
         register_module("gelu",
@@ -1345,41 +1340,15 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
     // norm
     norm_->load_state_dict(state_dict.get_dict_with_prefix("norm."));
     // proj_mlp
-    const auto proj_mlp_weight = state_dict.get_tensor("proj_mlp.weight");
-    if (proj_mlp_weight.defined()) {
-      DCHECK_EQ(proj_mlp_weight.sizes(), proj_mlp_->weight.sizes())
-          << "proj mlp weight size mismatch";
-      proj_mlp_->weight.data().copy_(proj_mlp_weight);
-      proj_mlp_->weight.data().to(dtype_).to(device_);
-    }
-    const auto proj_mlp_bias = state_dict.get_tensor("proj_mlp.bias");
-    if (proj_mlp_bias.defined()) {
-      DCHECK_EQ(proj_mlp_bias.sizes(), proj_mlp_->bias.sizes())
-          << "proj mlp bias size mismatch";
-      proj_mlp_->bias.data().copy_(proj_mlp_bias);
-      proj_mlp_->bias.data().to(dtype_).to(device_);
-    }
-    // proj_out
-    const auto proj_out_weight = state_dict.get_tensor("proj_out.weight");
-    if (proj_out_weight.defined()) {
-      DCHECK_EQ(proj_out_weight.sizes(), proj_out_->weight.sizes())
-          << "proj out weight size mismatch";
-      proj_out_->weight.data().copy_(proj_out_weight);
-      proj_out_->weight.data().to(dtype_).to(device_);
-    }
-    const auto proj_out_bias = state_dict.get_tensor("proj_out.bias");
-    if (proj_out_bias.defined()) {
-      DCHECK_EQ(proj_out_bias.sizes(), proj_out_->bias.sizes())
-          << "proj out bias size mismatch";
-      proj_out_->bias.data().copy_(proj_out_bias);
-      proj_out_->bias.data().to(dtype_).to(device_);
-    }
+    proj_mlp_->load_state_dict(state_dict.get_dict_with_prefix("proj_mlp."));
+    // proj_out_
+    proj_out_->load_state_dict(state_dict.get_dict_with_prefix("proj_out."));
   }
 
  private:
   AdaLayerNormZeroSingle norm_{nullptr};
-  DiTLinear proj_mlp_{nullptr};
-  DiTLinear proj_out_{nullptr};
+  xllm_ops::AddMatmul proj_mlp_{nullptr};
+  xllm_ops::AddMatmul proj_out_{nullptr};
   torch::nn::Functional act_mlp_{nullptr};
   FluxSingleAttention attn_{nullptr};
   int64_t mlp_hidden_dim_;
