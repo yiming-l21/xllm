@@ -21,15 +21,15 @@ limitations under the License.
 
 namespace xllm {
 
-DiTAclGraphExecutor::DiTAclGraphExecutor(DiTModel* model, const runtime::Options& options)
+DiTNpuExecutor::DiTNpuExecutor(DiTModel* model, const runtime::Options& options)
     : model_(model), options_(options) {}
 
-DiTForwardInput DiTAclGraphExecutor::prepare_inputs(DiTBatch& batch) {
-  return impl_->prepare_inputs(batch);
+DiTForwardInput DiTNpuExecutor::prepare_inputs(DiTBatch& batch) {
+  return batch.prepare_forward_input();
 }
 
-DiTForwardOutput DiTAclGraphExecutor::forward(const DiTForwardInput& input) {
-  return impl_->forward(input);
+DiTForwardOutput DiTNpuExecutor::forward(const DiTForwardInput& input) {
+  return model_->forward(input);
 }
 
 }  // namespace xllm

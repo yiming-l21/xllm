@@ -33,7 +33,7 @@ namespace xllm {
 
 class DiTExecutorImpl {
  public:
-  virtual ~DiTExecutor() = default;
+  virtual ~DiTExecutorImpl() = default;
 
   virtual DiTForwardInput prepare_inputs(DiTBatch& batch) = 0;
 

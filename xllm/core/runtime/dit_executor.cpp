@@ -18,20 +18,26 @@ limitations under the License.
 #include <glog/logging.h>
 
 #include "common/metrics.h"
-
 #include "dit_acl_graph_executor.h"
 #include "dit_npu_executor.h"
 
 namespace xllm {
 
 DiTExecutor::DiTExecutor(DiTModel* model, const runtime::Options& options) {
-
   bool enable_alc_graph = options.enable_prefix_cache();
-  if(enable_alc_graph) {
+  if (enable_alc_graph) {
     impl_ = std::make_unique<DiTAclGraphExecutor>(model, options);
   } else {
-    impl_ = std::make_unique<DiTNpuExecutor>(model, options);    
+    impl_ = std::make_unique<DiTNpuExecutor>(model, options);
   }
+}
+
+DiTForwardInput DiTExecutor::prepare_inputs(DiTBatch& batch) {
+  return impl_->prepare_inputs(batch);
+}
+
+DiTForwardOutput DiTExecutor::forward(const DiTForwardInput& input) {
+  return impl_->forward(input);
 }
 
 }  // namespace xllm

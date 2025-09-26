@@ -20,7 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 
-#include "core/runtime/dit_exector_impl.h"
+#include "core/runtime/dit_executor_impl.h"
 
 namespace xllm {
 
@@ -38,6 +38,6 @@ class DiTAclGraphExecutor : public DiTExecutorImpl {
   // not own
   DiTModel* model_;
   runtime::Options options_;
-}
+};
 
 }  // namespace xllm
