@@ -26,6 +26,7 @@ limitations under the License.
 namespace xllm {
 DiTEngine::DiTEngine(const runtime::Options& options) : options_(options) {
   const auto& devices = options_.devices();
+  LOG(INFO) << "Devices: " << devices;
   CHECK_GT(devices.size(), 0) << "At least one device is required";
 
   CHECK(!devices[0].is_cpu()) << "CPU device is not supported";
@@ -45,20 +46,23 @@ DiTEngine::DiTEngine(const runtime::Options& options) : options_(options) {
     const int32_t rank = static_cast<int32_t>(i);
     ProcessGroup* pg = world_size > 1 ? process_groups_[i].get() : nullptr;
     ParallelArgs parallel_args(rank, world_size, pg);
+    LOG(INFO) << "Creating DiT worker for rank: " << rank
+              << ", device: " << devices[i];
     workers_.emplace_back(
         std::make_unique<DiTWorker>(parallel_args, devices[i], options_));
   }
 
-  if (workers_.size() > 1) {
-    // test process group
-    std::vector<folly::SemiFuture<folly::Unit>> futures;
-    futures.reserve(workers_.size());
-    for (auto& worker : workers_) {
-      futures.emplace_back(worker->process_group_test_async());
-    }
-    // wait up to 4 seconds for all futures to complete
-    folly::collectAll(futures).within(std::chrono::seconds(4)).get();
-  }
+  // if (workers_.size() > 1) {
+  //   // test process group
+  //   std::vector<folly::SemiFuture<folly::Unit>> futures;
+  //   futures.reserve(workers_.size());
+  //   for (auto& worker : workers_) {
+  //     futures.emplace_back(worker->process_group_test_async());
+  //   }
+  //   // wait up to 4 seconds for all futures to complete
+  //   folly::collectAll(futures).within(std::chrono::seconds(4)).get();
+  // }
+  LOG(INFO) << "DiT Engine Initialized done Using devices: " << devices;
 }
 
 bool DiTEngine::init() {
@@ -77,7 +81,7 @@ bool DiTEngine::init_model() {
   LOG(INFO) << "Starting to init model on " << workers_.size() << " workers.";
   futures.reserve(workers_.size());
   for (auto& worker : workers_) {
-    futures.push_back(worker->init_model(model_path));
+    futures.push_back(worker->init_model_async(model_path));
   }
 
   // wait for all futures to complete

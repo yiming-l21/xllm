@@ -21,6 +21,9 @@ limitations under the License.
 #include <folly/futures/Future.h>
 #include <glog/logging.h>
 #include <torch/torch.h>
+
+#include <chrono>
+#include <future>
 #if defined(USE_NPU)
 #include <torch_npu/csrc/core/npu/NPUFormat.h>
 #include <torch_npu/csrc/core/npu/NPUFunctions.h>
@@ -63,7 +66,8 @@ bool DiTWorker::init_model(const std::string& model_weights_path) {
 #elif defined(USE_MLU)
 // TODO(mlu): implement mlu set device
 #endif
-
+  LOG(INFO) << "Loading DiT model weights from: " << model_weights_path
+            << " device: " << device_;
   auto loader = std::make_unique<DiTModelLoader>(model_weights_path);
   dtype_ = util::parse_dtype(loader->get_torch_dtype(), device_);
 
@@ -82,6 +86,17 @@ bool DiTWorker::init_model(const std::string& model_weights_path) {
       std::make_unique<DiTExecutor>(dit_model_.get(), options_);
 
   return true;
+}
+
+folly::SemiFuture<bool> DiTWorker::init_model_async(
+    const std::string& model_weights_path) {
+  auto sp = std::make_shared<folly::Promise<bool>>();
+  auto fut = sp->getSemiFuture();
+  threadpool_.schedule([this, model_weights_path, sp]() mutable {
+    bool status = this->init_model(model_weights_path);
+    sp->setValue(status);
+  });
+  return fut;
 }
 
 std::optional<DiTForwardOutput> DiTWorker::step(const DiTForwardInput& inputs) {
