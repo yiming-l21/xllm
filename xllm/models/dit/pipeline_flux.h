@@ -202,6 +202,7 @@ class FluxPipelineImpl : public torch::nn::Module {
   std::unique_ptr<Tokenizer> tokenizer_;
   std::unique_ptr<Tokenizer> tokenizer_2_;
 
+  bool enable_acl_graph_ = false;
   std::unique_ptr<DiTAclGraph> acl_graph_;
 
  public:
@@ -442,7 +443,7 @@ class FluxPipelineImpl : public torch::nn::Module {
             ? std::make_optional(input.negative_pooled_prompt_embeds)
             : std::nullopt;
 
-    if (!acl_graph_) {
+    if (enable_acl_graph_ && !acl_graph_) {
       acl_graph_ = std::make_unique<DiTAclGraph>();
       acl_graph_->capture(
           input, transformer_, _execution_dtype, _execution_device);

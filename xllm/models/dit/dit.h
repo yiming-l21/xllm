@@ -13,6 +13,7 @@
 #include "core/framework/dit_model_loader.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
+#include "dit_acl_graph.h"
 #include "dit_linear.h"
 #include "framework/model_context.h"
 #include "models/model_registry.h"
@@ -1835,19 +1836,55 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
     }
     torch::Tensor encoder_hidden_states =
         context_embedder_->forward(encoder_hidden_states_input.to(device_));
-    for (int64_t i = 0; i < transformer_blocks_->size(); ++i) {
-      auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
-      auto [new_hidden, new_encoder_hidden] = block->forward(
-          hidden_states, encoder_hidden_states, temb, image_rotary_emb);
-      hidden_states = new_hidden;
-      encoder_hidden_states = new_encoder_hidden;
+   
+    if(enable_acl_graph_ && trans_acl_graphs_.empty()) {
+      for (int64_t i = 0; i < transformer_blocks_->size(); ++i) {
+        auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
+
+        auto acl_graph = std::make_unique<TransBlockAclGraph>();
+        acl_graph->capture(block, dtype_, device_);
+
+        trans_acl_graphs_.emplace_back(acl_graph);
+      }
     }
+
+    for (int64_t i = 0; i < transformer_blocks_->size(); ++i) {
+      std::tuple<torch::Tensor, torch::Tensor> output;
+      if(enable_acl_graph_) {
+        output = trans_acl_graphs_[i]->replay(hidden_states, encoder_hidden_states, temb, image_rotary_emb);
+      } else {
+        auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
+        output = block->forward(
+            hidden_states, encoder_hidden_states, temb, image_rotary_emb);
+      }
+
+      hidden_states = std::get<0>(output);
+      encoder_hidden_states = std::get<1>(output);
+    }
+
+    if(enable_acl_graph_ && sigtrans_acl_graphs_.empty()) {
+      for (int64_t i = 0; i < single_transformer_blocks_->size(); ++i) {
+        auto block = single_transformer_blocks_[i]->as<FluxSingleTransformerBlock>();
+
+        auto acl_graph = std::make_unique<SigTransBlockAclGraph>();
+        acl_graph->capture(block, dtype_, device_);
+
+        sigtrans_acl_graphs_.emplace_back(acl_graph);
+      }
+    }
+
     hidden_states = torch::cat({encoder_hidden_states, hidden_states}, 1);
     for (int64_t i = 0; i < single_transformer_blocks_->size(); ++i) {
-      auto block =
-          single_transformer_blocks_[i]->as<FluxSingleTransformerBlock>();
-      hidden_states = block->forward(hidden_states, temb, image_rotary_emb);
+
+      if(enable_acl_graph_) {
+        hidden_states = sigtrans_acl_graphs_[i]->replay(hidden_states, temb, image_rotary_emb);
+      } else {        
+        auto block =
+            single_transformer_blocks_[i]->as<FluxSingleTransformerBlock>();
+        hidden_states = block->forward(hidden_states, temb, image_rotary_emb);
+      }
     }
+
     int64_t start = encoder_hidden_states.size(1);
     int64_t length = hidden_states.size(1) - start;
     auto output_hidden =
@@ -1942,6 +1979,10 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
   at::Device device_;
   bool guidance_embeds_;
   at::ScalarType dtype_;
+
+  bool enable_acl_graph_ = true;
+  std::vector<std::unique_ptr<DiTAclGraph>> trans_acl_graphs_;
+  std::vector<std::unique_ptr<DiTAclGraph>> sigtrans_acl_graphs_;
 };
 TORCH_MODULE(FluxTransformer2DModel);
 class FluxDiTModelImpl : public torch::nn::Module {

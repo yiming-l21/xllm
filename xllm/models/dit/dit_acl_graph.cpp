@@ -15,6 +15,12 @@
 
 namespace xllm {
 
+DiTAclGraph::DiTAclGraph() : model_(nullptr) {}
+
+DiTAclGraph::~DiTAclGraph() {
+  if(model_!=nullptr) aclmdlRIDestroy(model_);
+}
+
 void DiTAclGraph::capture(const DiTForwardInput& input,
                           hf::FluxDiTModel& model,
                           torch::ScalarType dtype,
@@ -88,5 +94,124 @@ torch::Tensor DiTAclGraph::replay(torch::Tensor hidden_states,
 
   return output_;
 }
+
+TransBlockAclGraph::TransBlockAclGraph() : model_(nullptr) {}
+
+TransBlockAclGraph::~TransBlockAclGraph() {
+  if(model_!=nullptr) aclmdlRIDestroy(model_);
+}
+
+void TransBlockAclGraph::capture(FluxTransformerBlock& model,
+                                 torch::ScalarType dtype,
+                                 torch::Device device) {
+  CHECK(model_ == nullptr) << "graph already captured";
+
+  auto options = torch::dtype(dtype).device(device);
+
+  hidden_states_ = torch::zeros({1, 1024, 3072}, options);
+  encoder_hidden_states_ = torch::zeros({1, 512, 3072}, options);
+
+  temb_ = torch::zeros({1, 3072}, options);
+  image_rotary_emb_ = torch::zeros({2, 1536, 128}, options);
+
+  torch::npu::synchronize();
+  aclrtStream stream =
+      c10_npu::getCurrentNPUStream(options.device().index()).stream();
+
+  // aclError st = aclmdlRICaptureBegin(stream,
+  // ACL_MODEL_RI_CAPTURE_MODE_RELAXED);
+  aclError st = aclmdlRICaptureBegin(stream, ACL_MODEL_RI_CAPTURE_MODE_GLOBAL);
+  CHECK_EQ(st, ACL_SUCCESS)
+      << "aclmdlRICaptureBegin failed, error code: " << st;
+
+  output_ = model->forward(hidden_states_,
+                           encoder_hidden_states_,
+                           temb_,
+                           image_rotary_emb_);
+
+  st = aclmdlRICaptureEnd(stream, &model_);
+  CHECK_EQ(st, ACL_SUCCESS) << "aclmdlRICaptureEnd failed, error code: " << st;
+  torch::npu::synchronize();
+}
+
+std::tuple<torch::Tensor, torch::Tensor> TransBlockAclGraph::replay(torch::Tensor hidden_states,
+                                                                    torch::Tensor encoder_hidden_states,
+                                                                    torch::Tensor temb,
+                                                                    torch::Tensor image_rotary_emb) {
+  CHECK(model_ != nullptr) << "graph not captured";
+
+  hidden_states_.copy_(hidden_states, true);
+  encoder_hidden_states_.copy_(encoder_hidden_states, true);
+
+  temb_.copy_(temb, true);
+  image_rotary_emb_.copy_(image_rotary_emb, true);
+
+  // replay the graph
+  aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
+  aclError st = aclmdlRIExecuteAsync(model_, stream);
+
+  CHECK_EQ(st, ACL_SUCCESS)
+      << "aclmdlRIExecuteAsync failed, error code: " << st;
+
+  return output_;
+}
+
+SigTransBlockAclGraph::SigTransBlockAclGraph() : model_(nullptr) {}
+
+SigTransBlockAclGraph::~SigTransBlockAclGraph() {
+  if(model_!=nullptr) aclmdlRIDestroy(model_);
+}
+
+void SigTransBlockAclGraph::capture(FluxTransformerBlock& model,
+                                    torch::ScalarType dtype,
+                                    torch::Device device) {
+  CHECK(model_ == nullptr) << "graph already captured";
+
+  auto options = torch::dtype(dtype).device(device);
+
+  hidden_states_ = torch::zeros({1, 1024+512, 3072}, options);
+
+  temb_ = torch::zeros({1, 3072}, options);
+  image_rotary_emb_ = torch::zeros({2, 1536, 128}, options);
+
+  torch::npu::synchronize();
+  aclrtStream stream =
+      c10_npu::getCurrentNPUStream(options.device().index()).stream();
+
+  // aclError st = aclmdlRICaptureBegin(stream,
+  // ACL_MODEL_RI_CAPTURE_MODE_RELAXED);
+  aclError st = aclmdlRICaptureBegin(stream, ACL_MODEL_RI_CAPTURE_MODE_GLOBAL);
+  CHECK_EQ(st, ACL_SUCCESS)
+      << "aclmdlRICaptureBegin failed, error code: " << st;
+
+  output_ = model->forward(hidden_states_,
+                           temb_,
+                           image_rotary_emb_);
+
+  st = aclmdlRICaptureEnd(stream, &model_);
+  CHECK_EQ(st, ACL_SUCCESS) << "aclmdlRICaptureEnd failed, error code: " << st;
+  torch::npu::synchronize();
+}
+
+torch::Tensor SigTransBlockAclGraph::replay(torch::Tensor hidden_states,
+                                         torch::Tensor temb,
+                                         torch::Tensor image_rotary_emb) {
+  CHECK(model_ != nullptr) << "graph not captured";
+
+  hidden_states_.copy_(hidden_states, true);
+
+  temb_.copy_(temb, true);
+  image_rotary_emb_.copy_(image_rotary_emb, true);
+
+  // replay the graph
+  aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
+  aclError st = aclmdlRIExecuteAsync(model_, stream);
+
+  CHECK_EQ(st, ACL_SUCCESS)
+      << "aclmdlRIExecuteAsync failed, error code: " << st;
+
+  return output_;
+}
+
 
 }  // namespace xllm

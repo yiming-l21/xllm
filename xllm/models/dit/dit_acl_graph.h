@@ -45,4 +45,58 @@ class DiTAclGraph {
   torch::Tensor output_;
 };
 
+class TransBlockAclGraph {
+ public:
+  DiTAclGraph() : model_(nullptr) {}
+
+  void capture(hf::FluxTransformerBlock& model,
+               torch::ScalarType dtype,
+               torch::Device device);
+
+  std::tuple<torch::Tensor, torch::Tensor> replay(torch::Tensor hidden_states,
+                                                  torch::Tensor encoder_hidden_states,
+                                                  torch::Tensor temb,
+                                                  torch::Tensor image_rotary_emb);
+
+ private:
+  aclmdlRI model_;
+
+  // input
+  torch::Tensor hidden_states_;
+  torch::Tensor encoder_hidden_states_;
+
+  torch::Tensor temb_;
+  torch::Tensor image_rotary_emb_;
+
+  // output
+std::tuple<torch::Tensor, torch::Tensor> output_;
+};
+
+class SigTransBlockAclGraph {
+ public:
+  DiTAclGraph();
+  ~DiTAclGraph();
+
+  void capture(hf::FluxSingleTransformerBlock& model,
+               torch::ScalarType dtype,
+               torch::Device device);
+
+  torch::Tensor replay(torch::Tensor hidden_states,
+                       torch::Tensor temb,
+                       torch::Tensor image_rotary_emb);
+
+ private:
+  aclmdlRI model_;
+
+  // input
+  torch::Tensor hidden_states_;
+
+  torch::Tensor temb_;
+  torch::Tensor image_rotary_emb_;
+
+  // output
+  torch::Tensor output_;
+};
+
+
 }  // namespace xllm
