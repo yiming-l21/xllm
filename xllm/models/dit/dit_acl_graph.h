@@ -1,10 +1,10 @@
-#pargma once
+#pragma once
 
 #include <acl/acl.h>
 #include <torch/torch.h>
 
-#include "dit.h"
 #include "core/runtime/dit_forward_params.h"
+#include "dit.h"
 
 namespace xllm {
 
@@ -13,7 +13,7 @@ class DiTAclGraph {
   DiTAclGraph() : model_(nullptr) {}
 
   void capture(const DiTForwardInput& input,
-               FluxDiTModel& model,
+               hf::FluxDiTModel& model,
                torch::ScalarType dtype,
                torch::Device device);
 

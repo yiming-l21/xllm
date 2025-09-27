@@ -442,9 +442,10 @@ class FluxPipelineImpl : public torch::nn::Module {
             ? std::make_optional(input.negative_pooled_prompt_embeds)
             : std::nullopt;
 
-    if(!acl_graph_) {
-      acl_graph_ = stad::make_unique<DiTAclGraph>();
-      acl_graph_->capture(input, transformer_, _execution_device, _execution_dtype);
+    if (!acl_graph_) {
+      acl_graph_ = std::make_unique<DiTAclGraph>();
+      acl_graph_->capture(
+          input, transformer_, _execution_dtype, _execution_device);
     }
 
     FluxPipelineOutput output = forward_(
@@ -708,7 +709,7 @@ class FluxPipelineImpl : public torch::nn::Module {
           .div_(1000.0f);
 
       torch::Tensor noise_pred;
-      if(acl_graph_) {
+      if (acl_graph_) {
         noise_pred = acl_graph_->replay(prepared_latents,
                                         encoded_prompt_embeds,
                                         encoded_pooled_embeds,
@@ -730,7 +731,7 @@ class FluxPipelineImpl : public torch::nn::Module {
 
       if (do_true_cfg) {
         torch::Tensor negative_noise_pred;
-        if(acl_graph_) {
+        if (acl_graph_) {
           negative_noise_pred = acl_graph_->replay(prepared_latents,
                                                    negative_encoded_embeds,
                                                    negative_pooled_embeds,
@@ -748,7 +749,7 @@ class FluxPipelineImpl : public torch::nn::Module {
                                                       negative_text_ids,
                                                       guidance,
                                                       0);
-        } 
+        }
         noise_pred =
             noise_pred + (noise_pred - negative_noise_pred) * true_cfg_scale;
         negative_noise_pred.reset();
