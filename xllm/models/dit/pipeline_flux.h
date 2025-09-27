@@ -27,6 +27,7 @@
 #include "core/layers/npu/word_embedding.h"
 #include "core/layers/rotary_embedding.h"
 #include "dit.h"
+#include "dit_acl_graph.h"
 #include "flowmatch_euler_discrete_scheduler.h"
 #include "framework/model_context.h"
 #include "models/model_registry.h"
@@ -200,6 +201,8 @@ class FluxPipelineImpl : public torch::nn::Module {
 
   std::unique_ptr<Tokenizer> tokenizer_;
   std::unique_ptr<Tokenizer> tokenizer_2_;
+
+  std::unique_ptr<DiTAclGraph> acl_graph_;
 
  public:
   FluxPipelineImpl(const DiTModelContext& context)
@@ -438,6 +441,11 @@ class FluxPipelineImpl : public torch::nn::Module {
         input.negative_pooled_prompt_embeds.defined()
             ? std::make_optional(input.negative_pooled_prompt_embeds)
             : std::nullopt;
+
+    if(!acl_graph_) {
+      acl_graph_ = stad::make_unique<DiTAclGraph>();
+      acl_graph_->capture(input, transformer_, _execution_device, _execution_dtype);
+    }
 
     FluxPipelineOutput output = forward_(
         prompts,                                       // prompt
@@ -698,24 +706,49 @@ class FluxPipelineImpl : public torch::nn::Module {
       timestep.fill_(t.item<float>())
           .to(prepared_latents.dtype())
           .div_(1000.0f);
-      torch::Tensor noise_pred = transformer_->forward(prepared_latents,
-                                                       encoded_prompt_embeds,
-                                                       encoded_pooled_embeds,
-                                                       timestep,
-                                                       latent_image_ids,
-                                                       text_ids,
-                                                       guidance,
-                                                       0);
+
+      torch::Tensor noise_pred;
+      if(acl_graph_) {
+        noise_pred = acl_graph_->replay(prepared_latents,
+                                        encoded_prompt_embeds,
+                                        encoded_pooled_embeds,
+                                        timestep,
+                                        latent_image_ids,
+                                        text_ids,
+                                        guidance,
+                                        0);
+      } else {
+        noise_pred = transformer_->forward(prepared_latents,
+                                           encoded_prompt_embeds,
+                                           encoded_pooled_embeds,
+                                           timestep,
+                                           latent_image_ids,
+                                           text_ids,
+                                           guidance,
+                                           0);
+      }
+
       if (do_true_cfg) {
-        torch::Tensor negative_noise_pred =
-            transformer_->forward(prepared_latents,
-                                  negative_encoded_embeds,
-                                  negative_pooled_embeds,
-                                  timestep,
-                                  latent_image_ids,
-                                  negative_text_ids,
-                                  guidance,
-                                  0);
+        torch::Tensor negative_noise_pred;
+        if(acl_graph_) {
+          negative_noise_pred = acl_graph_->replay(prepared_latents,
+                                                   negative_encoded_embeds,
+                                                   negative_pooled_embeds,
+                                                   timestep,
+                                                   latent_image_ids,
+                                                   negative_text_ids,
+                                                   guidance,
+                                                   0);
+        } else {
+          negative_noise_pred = transformer_->forward(prepared_latents,
+                                                      negative_encoded_embeds,
+                                                      negative_pooled_embeds,
+                                                      timestep,
+                                                      latent_image_ids,
+                                                      negative_text_ids,
+                                                      guidance,
+                                                      0);
+        } 
         noise_pred =
             noise_pred + (noise_pred - negative_noise_pred) * true_cfg_scale;
         negative_noise_pred.reset();

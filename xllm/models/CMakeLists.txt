@@ -26,9 +26,11 @@ cc_library(
   NAME 
     models
   HDRS
+    dit/dit_acl_graph.h
     model_registry.h
     models.h
   SRCS
+    dit/dit_acl_graph.cpp
     model_registry.cpp
   DEPS
     :model
