@@ -1,0 +1,21 @@
+include(cc_library)
+include(cc_test)
+
+cc_library(
+ NAME
+  dit_cache
+ HDRS
+  dit_cache_impl.h
+  dit_cache_data.h
+  dit_cache_config.h
+  dit_cache.h
+  fbcache.h
+  fbcachewithtaylor.h
+  taylorseer.h
+ SRCS
+  dit_cache_impl.cpp
+ DEPS
+  torch
+  glog::glog
+  Folly::folly
+)

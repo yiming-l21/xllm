@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "core/framework/dit_cache/dit_cache.h"
 #include "core/framework/dit_model_loader.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
@@ -19,10 +20,11 @@
 #include "models/model_registry.h"
 #include "processors/input_processor.h"
 #include "processors/pywarpper_image_processor.h"
-// DiT model compatible with huggingface weights
-//   ref to:
-//   https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_flux.py
+
 namespace xllm {
+// DiT model compatible with huggingface weights
+// ref to:
+// https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_flux.py
 inline torch::Tensor apply_rotary_emb(const torch::Tensor& x,
                                       const torch::Tensor& freqs_cis) {
   // assume freqs_cis is [2, S, D]，[0] is cos，[1] is sin
@@ -1547,25 +1549,105 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
     torch::Tensor encoder_hidden_states =
         context_embedder_->forward(encoder_hidden_states_input);
 
-    for (int64_t i = 0; i < transformer_blocks_->size(); ++i) {
-      auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
-      auto [new_hidden, new_encoder_hidden] = block->forward(
-          hidden_states, encoder_hidden_states, temb, image_rotary_emb);
-      hidden_states = new_hidden;
-      encoder_hidden_states = new_encoder_hidden;
-    }
-    hidden_states = torch::cat({encoder_hidden_states, hidden_states}, 1);
-    for (int64_t i = 0; i < single_transformer_blocks_->size(); ++i) {
-      auto block =
-          single_transformer_blocks_[i]->as<FluxSingleTransformerBlock>();
-      hidden_states = block->forward(hidden_states, temb, image_rotary_emb);
-    }
-    int64_t start = encoder_hidden_states.size(1);
-    int64_t length = hidden_states.size(1) - start;
-    auto output_hidden =
-        hidden_states.narrow(1, start, std::max(length, int64_t(0)));
-    output_hidden = norm_out_(output_hidden, temb);
+    bool use_step_cache = false;
+    bool use_block_cache = false;
 
+    torch::Tensor original_hidden_states = hidden_states;
+    torch::Tensor original_encoder_hidden_states = encoder_hidden_states;
+
+    {
+      // step_begin: input: hidden_states, original_hidden_states
+      TensorMap step_in_map = {
+          {"hidden_states", hidden_states},
+          {"original_hidden_states", original_hidden_states}};
+      CacheStepIn stepin_before(step_idx, step_in_map);
+      use_step_cache = DiTCache::getinstance().on_before_step(stepin_before);
+    }
+
+    if (!use_step_cache) {
+      for (int64_t i = 0; i < transformer_blocks_->size(); ++i) {
+        {
+          // transformer_block begin: input: block_id
+          CacheBlockIn blockin_before(i);
+          use_block_cache =
+              DiTCache::getinstance().on_before_block(blockin_before);
+        }
+
+        if (!use_block_cache) {
+          auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
+          auto [new_hidden, new_encoder_hidden] = block->forward(
+              hidden_states, encoder_hidden_states, temb, image_rotary_emb);
+          hidden_states = new_hidden;
+          encoder_hidden_states = new_encoder_hidden;
+        }
+
+        {
+          // transformer_block after: input: block_id, hidden_states,
+          // encoder_hidden_states, original_hidden_states,
+          // original_encoder_hidden_states
+          TensorMap block_in_map = {
+              {"hidden_states", hidden_states},
+              {"encoder_hidden_states", encoder_hidden_states},
+              {"original_hidden_states", original_hidden_states},
+              {"original_encoder_hidden_states",
+               original_encoder_hidden_states}};
+          CacheBlockIn blockin_after(i, block_in_map);
+          CacheBlockOut blockout_after =
+              DiTCache::getinstance().on_after_block(blockin_after);
+
+          hidden_states = blockout_after.tensors.at("hidden_states");
+          encoder_hidden_states =
+              blockout_after.tensors.at("encoder_hidden_states");
+        }
+      }
+
+      hidden_states = torch::cat({encoder_hidden_states, hidden_states}, 1);
+
+      for (int64_t i = 0; i < single_transformer_blocks_->size(); ++i) {
+        {
+          CacheBlockIn blockin_before(i);
+          use_block_cache =
+              DiTCache::getinstance().on_before_block(blockin_before);
+        }
+
+        if (!use_block_cache) {
+          auto block =
+              single_transformer_blocks_[i]->as<FluxSingleTransformerBlock>();
+          hidden_states = block->forward(hidden_states, temb, image_rotary_emb);
+        }
+
+        {
+          // single transformer_block after
+          TensorMap single_block_map = {
+              {"hidden_states", hidden_states},
+              {"original_hidden_states", original_hidden_states}};
+          CacheBlockIn blockin_after(i, single_block_map);
+          CacheBlockOut blockout_after =
+              DiTCache::getinstance().on_after_block(blockin_after);
+
+          hidden_states = blockout_after.tensors.at("hidden_states");
+        }
+      }
+
+      int64_t start = encoder_hidden_states.size(1);
+      int64_t length = hidden_states.size(1) - start;
+      auto output_hidden =
+          hidden_states.narrow(1, start, std::max(length, int64_t(0)));
+      hidden_states = output_hidden;
+    }
+
+    {
+      // step after: input : hidden_states , original_hidden_states
+      TensorMap step_after_map = {
+          {"hidden_states", hidden_states},
+          {"original_hidden_states", original_hidden_states}};
+      CacheStepIn stepin_after(step_idx, step_after_map);
+      CacheStepOut stepout_after =
+          DiTCache::getinstance().on_after_step(stepin_after);
+      hidden_states = stepout_after.tensors.at("hidden_states");
+    }
+
+    auto output_hidden = norm_out_(hidden_states, temb);
     return proj_out_(output_hidden);
   }
 
@@ -1676,7 +1758,7 @@ class FluxDiTModelImpl : public torch::nn::Module {
                                             timestep,
                                             image_rotary_emb,
                                             guidance,
-                                            0);
+                                            step_idx);
     return output;
   }
   int64_t in_channels() { return flux_transformer_2d_model_->in_channels(); }

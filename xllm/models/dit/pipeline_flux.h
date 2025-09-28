@@ -825,13 +825,14 @@ class FluxPipelineImpl : public torch::nn::Module {
       timestep.fill_(t.item<float>())
           .to(prepared_latents.dtype())
           .div_(1000.0f);
+      int64_t step_id = i + 1;
       torch::Tensor noise_pred = transformer_->forward(prepared_latents,
                                                        encoded_prompt_embeds,
                                                        encoded_pooled_embeds,
                                                        timestep,
                                                        image_rotary_emb,
                                                        guidance,
-                                                       0);
+                                                       step_id);
       if (do_true_cfg) {
         torch::Tensor negative_noise_pred =
             transformer_->forward(prepared_latents,
@@ -840,7 +841,7 @@ class FluxPipelineImpl : public torch::nn::Module {
                                   timestep,
                                   image_rotary_emb,
                                   guidance,
-                                  0);
+                                  step_id);
         noise_pred =
             noise_pred + (noise_pred - negative_noise_pred) * true_cfg_scale;
         negative_noise_pred.reset();

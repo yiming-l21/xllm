@@ -55,6 +55,7 @@ cc_library(
     :model_context
     :request
     :state_dict
+    :dit_cache
     $<$<BOOL:${USE_NPU}>:npu_layers>
     :model
     :models
