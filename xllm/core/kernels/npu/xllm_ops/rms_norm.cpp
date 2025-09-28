@@ -26,21 +26,17 @@ namespace xllm_ops {
 
 RMSNormImpl::RMSNormImpl(int64_t dim,
                          double eps,
-                         bool elementwise_affine = true,
-                         bool bias = false,
-                         const at::Device& device = torch::kCPU,
-                         const at::ScalarType& dtype = torch::kBFloat16)
+                         bool elementwise_affine,
+                         bool bias,
+                         torch::TensorOptions options)
     : eps_(eps),
       elementwise_affine_(elementwise_affine),
       is_bias_(bias),
-      device_(device),
-      dtype_(dtype) {
+      options_(options) {
   if (elementwise_affine_) {
-    weight_ =
-        register_parameter("weight", torch::ones({dim}, device_).to(dtype_));
+    weight_ = register_parameter("weight", torch::ones({dim}, options_));
     if (is_bias_) {
-      bias_ =
-          register_parameter("bias", torch::zeros({dim}, device_).to(dtype_));
+      bias_ = register_parameter("bias", torch::zeros({dim}, options_));
     }
   }
 }
@@ -62,7 +58,7 @@ void RMSNormImpl::load_state_dict(const xllm::StateDict& state_dict) {
           << "weight size mismatch: expected " << weight_.sizes() << " but got "
           << weight.sizes();
       weight_.data().copy_(weight);
-      weight_.data().to(dtype_).to(device_);
+      weight_.data().to(options_);
     }
     if (is_bias_) {
       auto bias = state_dict.get_tensor("bias");
@@ -71,7 +67,7 @@ void RMSNormImpl::load_state_dict(const xllm::StateDict& state_dict) {
             << "bias size mismatch: expected " << bias_.sizes() << " but got "
             << bias.sizes();
         bias_.data().copy_(bias);
-        bias_.data().to(dtype_).to(device_);
+        bias_.data().to(options_);
       }
     }
   }

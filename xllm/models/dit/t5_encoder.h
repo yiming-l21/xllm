@@ -14,11 +14,11 @@
 #include "core/framework/dit_model_loader.h"
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
-#include "dit_linear.h"
 #include "framework/model_context.h"
 #include "models/model_registry.h"
 #include "processors/input_processor.h"
 #include "processors/pywarpper_image_processor.h"
+#include "xllm/core/kernels/npu/xllm_ops/add_matmul.h"
 
 namespace xllm {
 // T5 model compatible with huggingface weights
@@ -83,12 +83,16 @@ class T5DenseActDenseImpl : public T5DenseInterface {
     auto model_args = context.get_model_args();
     auto options = context.get_tensor_options();
     wi_ = register_module(
-        "wi", DiTLinear(model_args.t5_d_model(), model_args.t5_d_ff(), false));
+        "wi",
+        xllm_ops::DiTLinear(
+            model_args.t5_d_model(), model_args.t5_d_ff(), false, options));
     wo_ = register_module(
-        "wo", DiTLinear(model_args.t5_d_ff(), model_args.t5_d_model(), false));
+        "wo",
+        xllm_ops::DiTLinear(
+            model_args.t5_d_ff(), model_args.t5_d_model(), false, options));
 
-    wi_->weight.set_data(wi_->weight.to(options));
-    wo_->weight.set_data(wo_->weight.to(options));
+    // wi_->weight.set_data(wi_->weight.to(options));
+    // wo_->weight.set_data(wo_->weight.to(options));
     if (model_args.t5_dense_act_fn() == "relu") {
       act_ = register_module("act", torch::nn::Functional(torch::relu));
     } else if (model_args.t5_dense_act_fn() == "gelu_new") {
@@ -101,36 +105,21 @@ class T5DenseActDenseImpl : public T5DenseInterface {
 
   void load_state_dict(const StateDict& state_dict) {
     // wi
-    const auto wi_weight = state_dict.get_tensor("wi.weight");
-    if (wi_weight.defined()) {
-      DCHECK_EQ(wi_weight.sizes(), wi_->weight.sizes())
-          << "wi weight size mismatch";
-      wi_->weight.data().copy_(wi_weight);
-    }
-
+    wi_->load_state_dict(state_dict.get_dict_with_prefix("wi."));
     // wo
-    const auto wo_weight = state_dict.get_tensor("wo.weight");
-    if (wo_weight.defined()) {
-      DCHECK_EQ(wo_weight.sizes(), wo_->weight.sizes())
-          << "wo weight size mismatch";
-      wo_->weight.data().copy_(wo_weight);
-    }
+    wo_->load_state_dict(state_dict.get_dict_with_prefix("wo."));
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states) {
     torch::Tensor hidden = wi_->forward(hidden_states);
     hidden = act_(hidden);
-    if (wo_->weight.dtype() != torch::kInt8 &&
-        hidden.dtype() != wo_->weight.dtype()) {
-      hidden = hidden.to(wo_->weight.dtype());
-    }
     hidden = wo_->forward(hidden);
     return hidden;
   }
 
  private:
-  DiTLinear wi_{nullptr};
-  DiTLinear wo_{nullptr};
+  xllm_ops::DiTLinear wi_{nullptr};
+  xllm_ops::DiTLinear wo_{nullptr};
   torch::nn::Functional act_{nullptr};
 };
 
@@ -141,16 +130,17 @@ class T5DenseGatedActDenseImpl : public T5DenseInterface {
     auto options = context.get_tensor_options();
     wi_0_ = register_module(
         "wi_0",
-        DiTLinear(model_args.t5_d_model(), model_args.t5_d_ff(), false));
+        xllm_ops::DiTLinear(
+            model_args.t5_d_model(), model_args.t5_d_ff(), false, options));
     wi_1_ = register_module(
         "wi_1",
-        DiTLinear(model_args.t5_d_model(), model_args.t5_d_ff(), false));
+        xllm_ops::DiTLinear(
+            model_args.t5_d_model(), model_args.t5_d_ff(), false, options));
     wo_ = register_module(
-        "wo", DiTLinear(model_args.t5_d_ff(), model_args.t5_d_model(), false));
+        "wo",
+        xllm_ops::DiTLinear(
+            model_args.t5_d_ff(), model_args.t5_d_model(), false, options));
 
-    wi_0_->weight.set_data(wi_0_->weight.to(options));
-    wi_1_->weight.set_data(wi_1_->weight.to(options));
-    wo_->weight.set_data(wo_->weight.to(options));
     if (model_args.t5_dense_act_fn() == "relu") {
       act_ = register_module("act", torch::nn::Functional(torch::relu));
     } else if (model_args.t5_dense_act_fn() == "gelu_new") {
@@ -163,44 +153,25 @@ class T5DenseGatedActDenseImpl : public T5DenseInterface {
 
   void load_state_dict(const StateDict& state_dict) {
     // wi_0
-    const auto wi_0_weight = state_dict.get_tensor("wi_0.weight");
-    if (wi_0_weight.defined()) {
-      DCHECK_EQ(wi_0_weight.sizes(), wi_0_->weight.sizes())
-          << "wi_0 weight size mismatch";
-      wi_0_->weight.data().copy_(wi_0_weight);
-    }
+    wi_0_->load_state_dict(state_dict.get_dict_with_prefix("wi_0."));
     // wi_1
-    const auto wi_1_weight = state_dict.get_tensor("wi_1.weight");
-    if (wi_1_weight.defined()) {
-      DCHECK_EQ(wi_1_weight.sizes(), wi_1_->weight.sizes())
-          << "wi_1 weight size mismatch";
-      wi_1_->weight.data().copy_(wi_1_weight);
-    }
+    wi_1_->load_state_dict(state_dict.get_dict_with_prefix("wi_1."));
     // wo
-    const auto wo_weight = state_dict.get_tensor("wo.weight");
-    if (wo_weight.defined()) {
-      DCHECK_EQ(wo_weight.sizes(), wo_->weight.sizes())
-          << "wo weight size mismatch";
-      wo_->weight.data().copy_(wo_weight);
-    }
+    wo_->load_state_dict(state_dict.get_dict_with_prefix("wo."));
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states) {
     torch::Tensor hidden_gelu = act_(wi_0_->forward(hidden_states));
     torch::Tensor hidden_linear = wi_1_->forward(hidden_states);
     torch::Tensor new_hidden_states = hidden_gelu * hidden_linear;
-    if (wo_->weight.dtype() != torch::kInt8 &&
-        new_hidden_states.dtype() != wo_->weight.dtype()) {
-      new_hidden_states = new_hidden_states.to(wo_->weight.dtype());
-    }
     new_hidden_states = wo_->forward(new_hidden_states);
     return new_hidden_states;
   }
 
  private:
-  DiTLinear wi_0_{nullptr};
-  DiTLinear wi_1_{nullptr};
-  DiTLinear wo_{nullptr};
+  xllm_ops::DiTLinear wi_0_{nullptr};
+  xllm_ops::DiTLinear wi_1_{nullptr};
+  xllm_ops::DiTLinear wo_{nullptr};
   torch::nn::Functional act_{nullptr};
 };
 
@@ -273,36 +244,6 @@ find_pruneable_heads_and_indices(
   return {heads_to_prune, index};
 }
 
-DiTLinear prune_linear_layer(const DiTLinear& layer,
-                             const torch::Tensor& index,
-                             int64_t dim = 0) {
-  torch::Device device = layer->weight.device();
-  torch::Tensor pruned_weight =
-      layer->weight.index_select(dim, index.to(device)).detach().clone();
-  std::optional<torch::Tensor> pruned_bias = std::nullopt;
-  if (layer->bias.defined()) {
-    if (dim == 1) {
-      pruned_bias = layer->bias.detach().clone();
-    } else {
-      pruned_bias = layer->bias.index({index.to(device)}).detach().clone();
-    }
-  }
-
-  DiTLinear new_layer(
-      pruned_weight.size(1), pruned_weight.size(0), pruned_bias.has_value());
-  new_layer->weight.requires_grad_(false);
-  new_layer->weight.copy_(pruned_weight.contiguous());
-  new_layer->weight.requires_grad_(true);
-
-  if (pruned_bias.has_value()) {
-    new_layer->bias.requires_grad_(false);
-    new_layer->bias.copy_(pruned_bias.value().contiguous());
-    new_layer->bias.requires_grad_(true);
-  }
-
-  return new_layer;
-}
-
 class T5AttentionImpl : public torch::nn::Module {
  public:
   T5AttentionImpl(const ModelContext& context,
@@ -321,38 +262,24 @@ class T5AttentionImpl : public torch::nn::Module {
         model_args.t5_relative_attention_max_distance();
 
     inner_dim_ = n_heads_ * key_value_proj_dim_;
-    q_ = register_module("q", DiTLinear(d_model_, inner_dim_, false));
-    k_ = register_module("k", DiTLinear(d_model_, inner_dim_, false));
-    v_ = register_module("v", DiTLinear(d_model_, inner_dim_, false));
-    o_ = register_module("o", DiTLinear(inner_dim_, d_model_, false));
+    q_ = register_module(
+        "q", xllm_ops::DiTLinear(d_model_, inner_dim_, false, options));
+    k_ = register_module(
+        "k", xllm_ops::DiTLinear(d_model_, inner_dim_, false, options));
+    v_ = register_module(
+        "v", xllm_ops::DiTLinear(d_model_, inner_dim_, false, options));
+    o_ = register_module(
+        "o", xllm_ops::DiTLinear(inner_dim_, d_model_, false, options));
 
-    q_->weight.set_data(q_->weight.to(options));
-    k_->weight.set_data(k_->weight.to(options));
-    v_->weight.set_data(v_->weight.to(options));
-    o_->weight.set_data(o_->weight.to(options));
+    // q_->weight.set_data(q_->weight.to(options));
+    // k_->weight.set_data(k_->weight.to(options));
+    // v_->weight.set_data(v_->weight.to(options));
+    // o_->weight.set_data(o_->weight.to(options));
 
     if (has_relative_attention_bias_) {
       relative_attention_bias_ = register_module(
           "relative_attention_bias",
           torch::nn::Embedding(relative_attention_num_buckets_, n_heads_));
-    }
-  }
-
-  void prune_heads(const std::vector<int64_t>& heads,
-                   torch::ScalarType dtype = torch::kBFloat16) {
-    if (heads.empty()) return;
-
-    auto [new_heads, indices] = find_pruneable_heads_and_indices(
-        heads, n_heads_, key_value_proj_dim_, pruned_heads_, dtype);
-    if (new_heads.empty()) return;
-    q_ = prune_linear_layer(q_, indices);
-    k_ = prune_linear_layer(k_, indices);
-    v_ = prune_linear_layer(v_, indices);
-    o_ = prune_linear_layer(o_, indices, 1);
-    n_heads_ -= new_heads.size();
-    inner_dim_ = key_value_proj_dim_ * n_heads_;
-    for (int64_t h : new_heads) {
-      pruned_heads_.insert(h);
     }
   }
 
@@ -518,34 +445,10 @@ class T5AttentionImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    auto q_weight = state_dict.get_tensor("q.weight");
-    if (q_weight.defined()) {
-      DCHECK_EQ(q_->weight.sizes(), q_weight.sizes())
-          << "q weight size mismatch: expected " << q_->weight.sizes()
-          << " but got " << q_weight.sizes();
-      q_->weight.data().copy_(q_weight);
-    }
-    auto k_weight = state_dict.get_tensor("k.weight");
-    if (k_weight.defined()) {
-      DCHECK_EQ(k_->weight.sizes(), k_weight.sizes())
-          << "k weight size mismatch: expected " << k_->weight.sizes()
-          << " but got " << k_weight.sizes();
-      k_->weight.data().copy_(k_weight);
-    }
-    auto v_weight = state_dict.get_tensor("v.weight");
-    if (v_weight.defined()) {
-      DCHECK_EQ(v_->weight.sizes(), v_weight.sizes())
-          << "v weight size mismatch: expected " << v_->weight.sizes()
-          << " but got " << v_weight.sizes();
-      v_->weight.data().copy_(v_weight);
-    }
-    auto o_weight = state_dict.get_tensor("o.weight");
-    if (o_weight.defined()) {
-      DCHECK_EQ(o_->weight.sizes(), o_weight.sizes())
-          << "o weight size mismatch: expected " << o_->weight.sizes()
-          << " but got " << o_weight.sizes();
-      o_->weight.data().copy_(o_weight);
-    }
+    q_->load_state_dict(state_dict.get_dict_with_prefix("q."));
+    k_->load_state_dict(state_dict.get_dict_with_prefix("k."));
+    v_->load_state_dict(state_dict.get_dict_with_prefix("v."));
+    o_->load_state_dict(state_dict.get_dict_with_prefix("o."));
     auto relative_attention_bias_weight_ =
         state_dict.get_tensor("relative_attention_bias.weight");
     if (relative_attention_bias_weight_.defined()) {
@@ -568,10 +471,10 @@ class T5AttentionImpl : public torch::nn::Module {
   int64_t n_heads_;
   int64_t inner_dim_;
   std::optional<int64_t> layer_idx_;
-  DiTLinear q_{nullptr};
-  DiTLinear k_{nullptr};
-  DiTLinear v_{nullptr};
-  DiTLinear o_{nullptr};
+  xllm_ops::DiTLinear q_{nullptr};
+  xllm_ops::DiTLinear k_{nullptr};
+  xllm_ops::DiTLinear v_{nullptr};
+  xllm_ops::DiTLinear o_{nullptr};
   torch::nn::Embedding relative_attention_bias_{nullptr};
   std::unordered_set<int64_t> pruned_heads_;
 };

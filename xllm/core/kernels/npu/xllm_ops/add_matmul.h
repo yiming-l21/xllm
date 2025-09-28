@@ -11,13 +11,14 @@
 
 namespace xllm_ops {
 
-class AddMatmulImpl : public torch::nn::Module {
+class DiTLinearImpl : public torch::nn::Module {
  public:
-  AddMatmulImpl(int64_t in,
+  DiTLinearImpl(int64_t in,
                 int64_t out,
                 bool with_bias,
-                const at::Device& device,
-                const at::ScalarType& dtype);
+                torch::TensorOptions options = torch::TensorOptions()
+                                                   .dtype(torch::kBFloat16)
+                                                   .device(torch::kCPU));
 
   torch::Tensor forward(const torch::Tensor& x);
 
@@ -26,10 +27,9 @@ class AddMatmulImpl : public torch::nn::Module {
   torch::Tensor weight_;
   torch::Tensor bias_;
   bool with_bias_;
-  at::Device device_;
-  at::ScalarType dtype_;
+  torch::TensorOptions options_;
 };
 
-TORCH_MODULE(AddMatmul);
+TORCH_MODULE(DiTLinear);
 
 }  // namespace xllm_ops

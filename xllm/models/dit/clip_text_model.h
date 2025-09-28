@@ -13,11 +13,11 @@
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/model_context.h"
 #include "core/layers/siglip_encoder_layer.h"
-#include "dit_linear.h"
 #include "models/model_registry.h"
 #include "processors/clip_image_processor.h"
 #include "processors/input_processor.h"
 #include "processors/pywarpper_image_processor.h"
+#include "xllm/core/kernels/npu/xllm_ops/add_matmul.h"
 #include "xllm_kernels/core/include/atb_speed/log.h"
 
 namespace xllm {
@@ -212,19 +212,18 @@ class CLIPMLPImpl : public torch::nn::Module {
     auto options = context.get_tensor_options();
     act_ = register_module("act", torch::nn::Functional(quick_gelu));
 
-    fc1_ = register_module("fc1",
-                           DiTLinear(model_args.clip_hidden_size(),
-                                     model_args.clip_intermediate_size(),
-                                     true));
-    fc2_ = register_module("fc2",
-                           DiTLinear(model_args.clip_intermediate_size(),
-                                     model_args.clip_hidden_size(),
-                                     true));
-
-    fc1_->weight.set_data(fc1_->weight.to(options));
-    fc2_->weight.set_data(fc2_->weight.to(options));
-    fc1_->bias.set_data(fc1_->bias.to(options));
-    fc2_->bias.set_data(fc2_->bias.to(options));
+    fc1_ =
+        register_module("fc1",
+                        xllm_ops::DiTLinear(model_args.clip_hidden_size(),
+                                            model_args.clip_intermediate_size(),
+                                            true,
+                                            options));
+    fc2_ =
+        register_module("fc2",
+                        xllm_ops::DiTLinear(model_args.clip_intermediate_size(),
+                                            model_args.clip_hidden_size(),
+                                            true,
+                                            options));
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states) {
@@ -232,54 +231,16 @@ class CLIPMLPImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    const auto fc1_weight = state_dict.get_tensor("fc1.weight");
-    if (fc1_weight.defined()) {
-      DCHECK_EQ(fc1_weight.sizes(), fc1_->weight.sizes())
-          << "fc1 weight size mismatch";
-      fc1_->weight.data().copy_(fc1_weight);
-      fc1_weight_loaded_ = true;
-    }
-
-    const auto fc1_bias = state_dict.get_tensor("fc1.bias");
-    if (fc1_bias.defined()) {
-      DCHECK_EQ(fc1_bias.sizes(), fc1_->bias.sizes())
-          << "fc1 bias size mismatch";
-      fc1_->bias.data().copy_(fc1_bias);
-      fc1_bias_loaded_ = true;
-    }
-
-    const auto fc2_weight = state_dict.get_tensor("fc2.weight");
-    if (fc2_weight.defined()) {
-      DCHECK_EQ(fc2_weight.sizes(), fc2_->weight.sizes())
-          << "fc2 weight size mismatch";
-      fc2_->weight.data().copy_(fc2_weight);
-      fc2_weight_loaded_ = true;
-    }
-
-    const auto fc2_bias = state_dict.get_tensor("fc2.bias");
-    if (fc2_bias.defined()) {
-      DCHECK_EQ(fc2_bias.sizes(), fc2_->bias.sizes())
-          << "fc2 bias size mismatch";
-      fc2_->bias.data().copy_(fc2_bias);
-      fc2_bias_loaded_ = true;
-    }
+    fc1_->load_state_dict(state_dict.get_dict_with_prefix("fc1."));
+    fc2_->load_state_dict(state_dict.get_dict_with_prefix("fc2."));
   }
 
-  void verify_loaded_weights(const std::string& prefix) const {
-    CHECK(fc1_weight_loaded_)
-        << "weight is not loaded for " << prefix + "fc1.weight";
-    CHECK(fc1_bias_loaded_)
-        << "weight is not loaded for " << prefix + "fc1.bias";
-    CHECK(fc2_weight_loaded_)
-        << "weight is not loaded for " << prefix + "fc2.weight";
-    CHECK(fc2_bias_loaded_)
-        << "weight is not loaded for " << prefix + "fc2.bias";
-  }
+  void verify_loaded_weights(const std::string& prefix) const {}
 
  private:
   torch::nn::Functional act_{nullptr};
-  DiTLinear fc1_{nullptr};
-  DiTLinear fc2_{nullptr};
+  xllm_ops::DiTLinear fc1_{nullptr};
+  xllm_ops::DiTLinear fc2_{nullptr};
   bool fc1_weight_loaded_{false};
   bool fc1_bias_loaded_{false};
   bool fc2_weight_loaded_{false};
@@ -306,29 +267,26 @@ class CLIPAttentionImpl : public torch::nn::Module {
                   n_local_heads * model_args.clip_head_dim()};
 
     scale_ = 1.0f / std::sqrt(static_cast<float>(model_args.clip_head_dim()));
-    q_proj_ = register_module(
-        "q_proj",
-        DiTLinear(model_args.clip_hidden_size(), num_heads_ * head_dim_, true));
-    k_proj_ = register_module(
-        "k_proj",
-        DiTLinear(model_args.clip_hidden_size(), num_heads_ * head_dim_, true));
-    v_proj_ = register_module(
-        "v_proj",
-        DiTLinear(model_args.clip_hidden_size(), num_heads_ * head_dim_, true));
+    q_proj_ = register_module("q_proj",
+                              xllm_ops::DiTLinear(model_args.clip_hidden_size(),
+                                                  num_heads_ * head_dim_,
+                                                  true,
+                                                  options));
+    k_proj_ = register_module("k_proj",
+                              xllm_ops::DiTLinear(model_args.clip_hidden_size(),
+                                                  num_heads_ * head_dim_,
+                                                  true,
+                                                  options));
+    v_proj_ = register_module("v_proj",
+                              xllm_ops::DiTLinear(model_args.clip_hidden_size(),
+                                                  num_heads_ * head_dim_,
+                                                  true,
+                                                  options));
     o_proj_ = register_module("o_proj",
-                              DiTLinear(model_args.clip_hidden_size(),
-                                        model_args.clip_hidden_size(),
-                                        true));
-
-    q_proj_->weight.set_data(q_proj_->weight.to(options));
-    k_proj_->weight.set_data(k_proj_->weight.to(options));
-    v_proj_->weight.set_data(v_proj_->weight.to(options));
-    o_proj_->weight.set_data(o_proj_->weight.to(options));
-
-    q_proj_->bias.set_data(q_proj_->bias.to(options));
-    k_proj_->bias.set_data(k_proj_->bias.to(options));
-    v_proj_->bias.set_data(v_proj_->bias.to(options));
-    o_proj_->bias.set_data(o_proj_->bias.to(options));
+                              xllm_ops::DiTLinear(model_args.clip_hidden_size(),
+                                                  model_args.clip_hidden_size(),
+                                                  true,
+                                                  options));
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states,
@@ -366,89 +324,13 @@ class CLIPAttentionImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    const auto q_proj_weight = state_dict.get_tensor("q_proj.weight");
-    if (q_proj_weight.defined()) {
-      DCHECK_EQ(q_proj_weight.sizes(), q_proj_->weight.sizes())
-          << "q_proj weight size mismatch";
-      q_proj_->weight.data().copy_(q_proj_weight);
-      q_proj_weight_loaded_ = true;
-    }
-
-    const auto q_proj_bias = state_dict.get_tensor("q_proj.bias");
-    if (q_proj_bias.defined()) {
-      DCHECK_EQ(q_proj_bias.sizes(), q_proj_->bias.sizes())
-          << "q_proj bias size mismatch";
-      q_proj_->bias.data().copy_(q_proj_bias);
-      q_proj_bias_loaded_ = true;
-    }
-
-    const auto k_proj_weight = state_dict.get_tensor("k_proj.weight");
-    if (k_proj_weight.defined()) {
-      DCHECK_EQ(k_proj_weight.sizes(), k_proj_->weight.sizes())
-          << "k_proj weight size mismatch";
-      k_proj_->weight.data().copy_(k_proj_weight);
-      k_proj_weight_loaded_ = true;
-    }
-
-    const auto k_proj_bias = state_dict.get_tensor("k_proj.bias");
-    if (k_proj_bias.defined()) {
-      DCHECK_EQ(k_proj_bias.sizes(), k_proj_->bias.sizes())
-          << "k_proj bias size mismatch";
-      k_proj_->bias.data().copy_(k_proj_bias);
-      k_proj_bias_loaded_ = true;
-    }
-
-    const auto v_proj_weight = state_dict.get_tensor("v_proj.weight");
-    if (v_proj_weight.defined()) {
-      DCHECK_EQ(v_proj_weight.sizes(), v_proj_->weight.sizes())
-          << "v_proj weight size mismatch";
-      v_proj_->weight.data().copy_(v_proj_weight);
-      v_proj_weight_loaded_ = true;
-    }
-
-    const auto v_proj_bias = state_dict.get_tensor("v_proj.bias");
-    if (v_proj_bias.defined()) {
-      DCHECK_EQ(v_proj_bias.sizes(), v_proj_->bias.sizes())
-          << "v_proj bias size mismatch";
-      v_proj_->bias.data().copy_(v_proj_bias);
-      v_proj_bias_loaded_ = true;
-    }
-
-    const auto o_proj_weight = state_dict.get_tensor("out_proj.weight");
-    if (o_proj_weight.defined()) {
-      DCHECK_EQ(o_proj_weight.sizes(), o_proj_->weight.sizes())
-          << "o_proj weight size mismatch";
-      o_proj_->weight.data().copy_(o_proj_weight);
-      o_proj_weight_loaded_ = true;
-    }
-
-    const auto o_proj_bias = state_dict.get_tensor("out_proj.bias");
-    if (o_proj_bias.defined()) {
-      DCHECK_EQ(o_proj_bias.sizes(), o_proj_->bias.sizes())
-          << "o_proj bias size mismatch";
-      o_proj_->bias.data().copy_(o_proj_bias);
-      o_proj_bias_loaded_ = true;
-    }
+    q_proj_->load_state_dict(state_dict.get_dict_with_prefix("q_proj."));
+    k_proj_->load_state_dict(state_dict.get_dict_with_prefix("k_proj."));
+    v_proj_->load_state_dict(state_dict.get_dict_with_prefix("v_proj."));
+    o_proj_->load_state_dict(state_dict.get_dict_with_prefix("out_proj."));
   }
 
-  void verify_loaded_weights(const std::string& prefix) const {
-    CHECK(q_proj_weight_loaded_)
-        << "weight is not loaded for " << prefix + "q_proj.weight";
-    CHECK(q_proj_bias_loaded_)
-        << "weight is not loaded for " << prefix + "q_proj.bias";
-    CHECK(k_proj_weight_loaded_)
-        << "weight is not loaded for " << prefix + "k_proj.weight";
-    CHECK(k_proj_bias_loaded_)
-        << "weight is not loaded for " << prefix + "k_proj.bias";
-    CHECK(v_proj_weight_loaded_)
-        << "weight is not loaded for " << prefix + "v_proj.weight";
-    CHECK(v_proj_bias_loaded_)
-        << "weight is not loaded for " << prefix + "v_proj.bias";
-    CHECK(o_proj_weight_loaded_)
-        << "weight is not loaded for " << prefix + "out_proj.weight";
-    CHECK(o_proj_bias_loaded_)
-        << "weight is not loaded for " << prefix + "out_proj.bias";
-  }
+  void verify_loaded_weights(const std::string& prefix) const {}
 
  private:
   torch::Tensor shape(torch::Tensor tensor, int64_t seq_len, int64_t bsz) {
@@ -464,10 +346,10 @@ class CLIPAttentionImpl : public torch::nn::Module {
   float scale_;
   std::vector<int64_t> qkv_sizes_;
 
-  DiTLinear o_proj_{nullptr};
-  DiTLinear q_proj_{nullptr};
-  DiTLinear k_proj_{nullptr};
-  DiTLinear v_proj_{nullptr};
+  xllm_ops::DiTLinear o_proj_{nullptr};
+  xllm_ops::DiTLinear q_proj_{nullptr};
+  xllm_ops::DiTLinear k_proj_{nullptr};
+  xllm_ops::DiTLinear v_proj_{nullptr};
 
   bool q_proj_weight_loaded_{false};
   bool q_proj_bias_loaded_{false};

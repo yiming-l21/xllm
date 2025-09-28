@@ -32,10 +32,11 @@ class RMSNormImpl : public torch::nn::Module {
   // elementwise_affine (enable affine transform), bias (enable bias term)
   RMSNormImpl(int64_t dim,
               double eps,
-              bool elementwise_affine,
-              bool bias,
-              const at::Device& device,
-              const at::ScalarType& dtype);
+              bool elementwise_affine = true,
+              bool bias = false,
+              torch::TensorOptions options = torch::TensorOptions()
+                                                 .dtype(torch::kBFloat16)
+                                                 .device(torch::kCPU));
 
   torch::Tensor forward(const torch::Tensor& hidden_states);
 
@@ -47,8 +48,7 @@ class RMSNormImpl : public torch::nn::Module {
   torch::Tensor weight_;     // Learnable scale parameter
   torch::Tensor bias_;       // Learnable bias parameter (optional)
   bool is_bias_;
-  at::Device device_;
-  at::ScalarType dtype_;  // Data type for the parameters
+  torch::TensorOptions options_;
 };
 
 TORCH_MODULE(RMSNorm);
