@@ -313,7 +313,7 @@ class FluxPipelineImpl : public torch::nn::Module {
   std::unique_ptr<Tokenizer> tokenizer_;
   std::unique_ptr<Tokenizer> tokenizer_2_;
 
-  bool enable_acl_graph_ = false;
+  bool enable_acl_graph_ = true;
   std::unique_ptr<DiTAclGraph> acl_graph_;
 
  public:
@@ -544,8 +544,7 @@ class FluxPipelineImpl : public torch::nn::Module {
 
     if (enable_acl_graph_ && !acl_graph_) {
       acl_graph_ = std::make_unique<DiTAclGraph>();
-      acl_graph_->capture(
-          input, transformer_, _execution_dtype, _execution_device);
+      acl_graph_->capture(input, transformer_, options_);
     }
 
     FluxPipelineOutput output = forward_(
@@ -827,6 +826,7 @@ class FluxPipelineImpl : public torch::nn::Module {
                                   height.value() / (vae_scale_factor_ * 2),
                                   width.value() / (vae_scale_factor_ * 2));
     torch::Tensor image_rotary_emb = torch::stack({rot_emb1, rot_emb2}, 0);
+
     for (int64_t i = 0; i < timesteps.numel(); ++i) {
       if (_interrupt) break;
 

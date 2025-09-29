@@ -1559,7 +1559,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
         auto block = transformer_layers_[i];
 
         auto acl_graph = std::make_unique<TransBlockAclGraph>();
-        acl_graph->capture(block, options_.dtype(), options_.device());
+        acl_graph->capture(block, options_);
 
         trans_acl_graphs_.emplace_back(std::move(acl_graph));
       }
@@ -1629,7 +1629,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
           auto block = single_transformer_layers_[i];
 
           auto acl_graph = std::make_unique<SigTransBlockAclGraph>();
-          acl_graph->capture(block, options_.dtype(), options_.device());
+          acl_graph->capture(block, options_);
 
           sigtrans_acl_graphs_.emplace_back(std::move(acl_graph));
         }
@@ -1651,7 +1651,8 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
           } else {
             auto block =
                 single_transformer_blocks_[i]->as<FluxSingleTransformerBlock>();
-            hidden_states = block->forward(hidden_states, temb, image_rotary_emb);
+            hidden_states =
+                block->forward(hidden_states, temb, image_rotary_emb);
           }
         }
 
@@ -1775,7 +1776,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
   int64_t out_channels_;
   torch::TensorOptions options_;
 
-  bool enable_acl_graph_ = true;
+  bool enable_acl_graph_ = false;
   std::vector<std::unique_ptr<TransBlockAclGraph>> trans_acl_graphs_;
   std::vector<std::unique_ptr<SigTransBlockAclGraph>> sigtrans_acl_graphs_;
 };

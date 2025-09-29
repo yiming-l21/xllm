@@ -24,12 +24,9 @@ DiTAclGraph::~DiTAclGraph() {
 }
 
 void DiTAclGraph::capture(const DiTForwardInput& input,
-                          hf::FluxDiTModel& model,
-                          torch::ScalarType dtype,
-                          torch::Device device) {
+                          FluxDiTModel& model,
+                          const torch::TensorOptions& options) {
   CHECK(model_ == nullptr) << "graph already captured";
-
-  auto options = torch::dtype(dtype).device(device);
 
   hidden_states_ = torch::zeros({1, 1024, 64}, options);
   encoder_hidden_states_ = torch::zeros({1, 512, 4096}, options);
@@ -37,9 +34,7 @@ void DiTAclGraph::capture(const DiTForwardInput& input,
   pooled_projections_ = torch::zeros({1, 768}, options);
   timestep_ = torch::zeros({1}, options);
 
-  img_ids_ = torch::zeros({1024, 3}, options);
-  txt_ids_ = torch::zeros({512, 3}, options);
-
+  image_rotary_emb_ = torch::zeros({2, 1536, 128}, options);
   guidance_ = torch::zeros({1}, options);
 
   torch::npu::synchronize();
@@ -56,8 +51,7 @@ void DiTAclGraph::capture(const DiTForwardInput& input,
                            encoder_hidden_states_,
                            pooled_projections_,
                            timestep_,
-                           img_ids_,
-                           txt_ids_,
+                           image_rotary_emb_,
                            guidance_,
                            0);
 
@@ -70,8 +64,7 @@ torch::Tensor DiTAclGraph::replay(torch::Tensor hidden_states,
                                   torch::Tensor encoder_hidden_states,
                                   torch::Tensor pooled_projections,
                                   torch::Tensor timestep,
-                                  torch::Tensor img_ids,
-                                  torch::Tensor txt_ids,
+                                  torch::Tensor image_rotary_emb,
                                   torch::Tensor guidance,
                                   int64_t step_idx) {
   CHECK(model_ != nullptr) << "graph not captured";
@@ -82,9 +75,7 @@ torch::Tensor DiTAclGraph::replay(torch::Tensor hidden_states,
   pooled_projections_.copy_(pooled_projections, true);
   timestep_.copy_(timestep, true);
 
-  img_ids_.copy_(img_ids, true);
-  txt_ids_.copy_(txt_ids, true);
-
+  image_rotary_emb_.copy_(image_rotary_emb, true);
   guidance_.copy_(guidance, true);
 
   // replay the graph
@@ -101,11 +92,8 @@ TransBlockAclGraph::TransBlockAclGraph() {}
 
 TransBlockAclGraph::~TransBlockAclGraph() {}
 
-void TransBlockAclGraph::capture(hf::FluxTransformerBlock& model,
-                                 torch::ScalarType dtype,
-                                 torch::Device device) {
-  auto options = torch::dtype(dtype).device(device);
-
+void TransBlockAclGraph::capture(FluxTransformerBlock& model,
+                                 const torch::TensorOptions& options) {
   hidden_states_ = torch::zeros({1, 1024, 3072}, options);
   encoder_hidden_states_ = torch::zeros({1, 512, 3072}, options);
 
@@ -163,11 +151,8 @@ SigTransBlockAclGraph::SigTransBlockAclGraph() {}
 
 SigTransBlockAclGraph::~SigTransBlockAclGraph() {}
 
-void SigTransBlockAclGraph::capture(hf::FluxSingleTransformerBlock& model,
-                                    torch::ScalarType dtype,
-                                    torch::Device device) {
-  auto options = torch::dtype(dtype).device(device);
-
+void SigTransBlockAclGraph::capture(FluxSingleTransformerBlock& model,
+                                    const torch::TensorOptions& options) {
   hidden_states_ = torch::zeros({1, 1024 + 512, 3072}, options);
 
   temb_ = torch::zeros({1, 3072}, options);

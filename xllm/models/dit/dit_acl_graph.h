@@ -8,11 +8,9 @@
 
 namespace xllm {
 
-namespace hf {
 class FluxDiTModel;
 class FluxTransformerBlock;
 class FluxSingleTransformerBlock;
-}  // namespace hf
 
 class DiTAclGraph {
  public:
@@ -20,16 +18,14 @@ class DiTAclGraph {
   ~DiTAclGraph();
 
   void capture(const DiTForwardInput& input,
-               hf::FluxDiTModel& model,
-               torch::ScalarType dtype,
-               torch::Device device);
+               FluxDiTModel& model,
+               const torch::TensorOptions& options);
 
   torch::Tensor replay(torch::Tensor hidden_states,
                        torch::Tensor encoder_hidden_states,
                        torch::Tensor pooled_projections,
                        torch::Tensor timestep,
-                       torch::Tensor img_ids,
-                       torch::Tensor txt_ids,
+                       torch::Tensor image_rotary_emb,
                        torch::Tensor guidance,
                        int64_t step_idx = 0);
 
@@ -43,9 +39,7 @@ class DiTAclGraph {
   torch::Tensor pooled_projections_;
   torch::Tensor timestep_;
 
-  torch::Tensor img_ids_;
-  torch::Tensor txt_ids_;
-
+  torch::Tensor image_rotary_emb_;
   torch::Tensor guidance_;
 
   // output
@@ -57,9 +51,8 @@ class TransBlockAclGraph {
   TransBlockAclGraph();
   ~TransBlockAclGraph();
 
-  void capture(hf::FluxTransformerBlock& model,
-               torch::ScalarType dtype,
-               torch::Device device);
+  void capture(FluxTransformerBlock& model,
+               const torch::TensorOptions& options);
 
   std::tuple<torch::Tensor, torch::Tensor> replay(
       torch::Tensor hidden_states,
@@ -86,9 +79,8 @@ class SigTransBlockAclGraph {
   SigTransBlockAclGraph();
   ~SigTransBlockAclGraph();
 
-  void capture(hf::FluxSingleTransformerBlock& model,
-               torch::ScalarType dtype,
-               torch::Device device);
+  void capture(FluxSingleTransformerBlock& model,
+               const torch::TensorOptions& options);
 
   torch::Tensor replay(torch::Tensor hidden_states,
                        torch::Tensor temb,
