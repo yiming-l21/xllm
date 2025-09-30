@@ -45,6 +45,12 @@ torch::Tensor reduce(torch::Tensor input, const ParallelArgs& parallel_args);
 
 torch::Tensor scatter(torch::Tensor input, const ParallelArgs& parallel_args);
 
+std::vector<torch::Tensor> all_gather(torch::Tensor& input,
+                                      const ParallelArgs& parallel_args);
+torch::Tensor all_to_all_equal(torch::Tensor& send,
+                               bool is_sync,
+                               const ParallelArgs& parallel_args);
+
 }  // namespace parallel_state
 
 class ProcessGroup;
@@ -187,6 +193,16 @@ class ProcessGroupHCCL : public ProcessGroup {
 
   void allgather(torch::Tensor input,
                  std::vector<torch::Tensor>& outputs) override;
+
+  void alltoall_single(torch::Tensor send,
+                       torch::Tensor recv,
+                       const std::vector<int64_t>& send_splits,
+                       const std::vector<int64_t>& recv_splits,
+                       bool is_sync = false);
+
+  void alltoall_equal(torch::Tensor send,
+                      torch::Tensor recv,
+                      bool is_sync = false);
 
  private:
   HcclComm comm_ = nullptr;

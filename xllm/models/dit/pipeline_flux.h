@@ -271,7 +271,7 @@ class FluxPipelineImpl : public torch::nn::Module {
     const auto& model_args = context.get_model_args("vae");
     vae_scale_factor_ = 1 << (model_args.vae_block_out_channels().size() - 1);
     _execution_device = options_.device();
-    _execution_dtype = torch::kBFloat16;
+    _execution_dtype = options_.dtype().toScalarType();
 
     vae_shift_factor_ = model_args.vae_shift_factor();
     vae_scaling_factor_ = model_args.vae_scale_factor();

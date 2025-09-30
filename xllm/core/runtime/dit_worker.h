@@ -38,7 +38,15 @@ class DiTWorker {
   // initialize model, cache manager. blocking call
   bool init_model(const std::string& model_weights_path);
 
+  folly::SemiFuture<bool> init_model_async(
+      const std::string& model_weights_path);
+
   std::optional<DiTForwardOutput> step(const DiTForwardInput& inputs);
+
+  folly::SemiFuture<std::optional<DiTForwardOutput>> step_async(
+      const DiTForwardInput& inputs);
+
+  void process_group_test();
 
   folly::SemiFuture<folly::Unit> process_group_test_async();
 

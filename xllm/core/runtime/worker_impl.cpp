@@ -334,12 +334,13 @@ std::tuple<int64_t, int64_t> WorkerImpl::estimate_kv_cache_capacity() {
 }
 
 void WorkerImpl::process_group_test() {
+  LOG(INFO) << "in the test" << device_.index() << device_;
 #if defined(USE_NPU)
   c10_npu::SetDevice(device_.index());
 #elif defined(USE_MLU)
   // TODO(mlu): implement mlu process group test
 #endif
-
+  LOG(INFO) << "hrer";
   // create random tensors
   const auto options = torch::dtype(torch::kHalf).device(device_);
   torch::Tensor tensor = torch::randn({10, 10}, options);

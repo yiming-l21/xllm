@@ -42,6 +42,14 @@ VLMEngine::VLMEngine(const runtime::Options& options) : options_(options) {
   for (const auto device : devices) {
     CHECK_EQ(device.type(), device_type)
         << "All devices should be the same type";
+    int currentDevId = device.index();
+#if defined(USE_NPU)
+    int ret = aclrtSetDevice(currentDevId);
+    if (ret != 0) {
+      LOG(ERROR) << "ACL set device id:" << currentDevId
+                 << " failed, ret:" << ret;
+    }
+#endif
   }
 
   // initialize process groups if there are multiple devices
@@ -56,6 +64,9 @@ VLMEngine::VLMEngine(const runtime::Options& options) : options_(options) {
   for (size_t i = 0; i < devices.size(); ++i) {
     const int32_t rank = static_cast<int32_t>(i);
     ProcessGroup* pg = world_size > 1 ? process_groups_[i].get() : nullptr;
+    if (pg == nullptr) {
+      LOG(INFO) << "important check pg is null!!!!";
+    }
     ParallelArgs parallel_args(rank, world_size, pg);
     workers_.emplace_back(std::make_unique<Worker>(
         parallel_args, devices[i], options_, worker_type));

@@ -9,7 +9,7 @@ namespace xllm {
 class FBCache : public DitCacheImpl {
  public:
   void init(const DiTCacheConfig& cfg) override {
-    residual_diff_threshold = cfg.fbcache.residual_diff_threshold;
+    residual_diff_threshold = 0;  // cfg.fbcache.residual_diff_threshold;
     num_inference_steps = cfg.fbcache.num_inference_steps;
     warmup_steps = cfg.fbcache.warmup_steps;
     current_step = 0;

@@ -20,6 +20,8 @@ limitations under the License.
 #include <hccl/hccl_types.h>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
+#include <acl/acl.h>
+#include <torch_npu/csrc/core/npu/NPUEvent.h>
 #include <torch_npu/csrc/core/npu/NPUStream.h>
 
 #include "hccl/hccl.h"
@@ -170,6 +172,39 @@ torch::Tensor scatter(torch::Tensor input, const ParallelArgs& parallel_args) {
   return tensor_list[rank];
 }
 
+std::vector<torch::Tensor> all_gather(torch::Tensor& input,
+                                      const ParallelArgs& parallel_args) {
+  const int world_size = parallel_args.world_size();
+  if (world_size <= 1) {
+    return {input};
+  }
+  auto* pg = parallel_args.process_group_;
+  CHECK(pg != nullptr) << "all_gather: process_group_ is null";
+
+  std::vector<torch::Tensor> outputs(world_size);
+  for (int i = 0; i < world_size; ++i) {
+    outputs[i] = torch::empty_like(input);
+  }
+  pg->allgather(input, outputs);
+  return outputs;
+}
+
+torch::Tensor all_to_all_equal(torch::Tensor& send,
+                               bool is_sync,
+                               const ParallelArgs& parallel_args) {
+  const int P = parallel_args.world_size();
+  if (P <= 1) return send;
+  auto* pg = parallel_args.process_group_;
+  CHECK(pg != nullptr) << "all_to_all_equal: process_group_ is null";
+  auto recv = torch::empty_like(send);
+#if defined(USE_NPU)
+  static_cast<ProcessGroupHCCL*>(pg)->alltoall_equal(send, recv, is_sync);
+#else
+  LOG(FATAL) << "all_to_all_equal only implemented for NPU";
+#endif
+  return recv;
+}
+
 }  // namespace parallel_state
 
 #if defined(USE_NPU)
@@ -186,7 +221,7 @@ std::vector<std::unique_ptr<ProcessGroup>> ProcessGroup::create_process_groups(
   }
   std::vector<HcclComm> comms(devices.size());
   const int world_size = static_cast<int>(devices.size());
-  // HCCLCHECK(HcclCommInitAll(world_size, device_idxs.data(),comms.data()));
+  HCCLCHECK(HcclCommInitAll(world_size, device_idxs.data(), comms.data()));
   std::vector<std::unique_ptr<ProcessGroup>> process_groups;
   process_groups.reserve(devices.size());
   for (int i = 0; i < world_size; ++i) {
@@ -199,7 +234,7 @@ std::vector<std::unique_ptr<ProcessGroup>> ProcessGroup::create_process_groups(
 // TODO(mlu): implement create_process_groups for mlu
 std::vector<std::unique_ptr<ProcessGroup>> ProcessGroup::create_process_groups(
     const std::vector<torch::Device>& devices) {
-  return {};
+  return { LOG(FATAL) << "Not implemented for mlu"; };
 }
 #endif
 
@@ -233,26 +268,100 @@ void ProcessGroupHCCL::allreduce(torch::Tensor& input) {
 void ProcessGroupHCCL::allgather(torch::Tensor input,
                                  std::vector<torch::Tensor>& outputs) {
   check_input(input);
-  // CHECK(outputs.size() == world_size())
-  //     << "outputs should have the same size as world_size";
-  // DCHECK(input.device() == device())
-  //     << "input should be on the same device as the process group";
-  // torch::DeviceGuard device_guard(device());
-  // torch::Tensor flattened_output = flatten_for_scatter_gather(outputs);
-  // const auto count = input.numel();
-  // const auto data_type = to_hccl_data_type(input);
-  // auto stream = c10_npu::getCurrentNPUStream();
-  // HCCLCHECK(HcclAllGather(
-  //     /*sendbuff=*/input.data_ptr(),
-  //     /*recvbuff=*/flattened_output.data_ptr(),
-  //     /*sendcount=*/count,
-  //     /*datatype=*/data_type,
-  //     /*comm=*/comm_,
-  //     /*stream=*/stream));
-  // // copy the flattened output tensors to the outputs.
-  // for (int i = 0; i < outputs.size(); ++i) {
-  //   outputs[i].copy_(flattened_output[i], /*non_blocking=*/true);
-  // }
+  CHECK(outputs.size() == world_size())
+      << "outputs should have the same size as world_size";
+  DCHECK(input.device() == device())
+      << "input should be on the same device as the process group";
+  torch::DeviceGuard device_guard(device());
+  torch::Tensor flattened_output = flatten_for_scatter_gather(outputs);
+  const auto count = input.numel();
+  const auto data_type = to_hccl_data_type(input);
+  auto stream = c10_npu::getCurrentNPUStream();
+  HCCLCHECK(HcclAllGather(
+      /*sendbuff=*/input.data_ptr(),
+      /*recvbuff=*/flattened_output.data_ptr(),
+      /*sendcount=*/count,
+      /*datatype=*/data_type,
+      /*comm=*/comm_,
+      /*stream=*/stream));
+  // copy the flattened output tensors to the outputs.
+  for (int i = 0; i < outputs.size(); ++i) {
+    outputs[i].copy_(flattened_output[i], /*non_blocking=*/true);
+  }
 }
+
+void ProcessGroupHCCL::alltoall_single(torch::Tensor send,
+                                       torch::Tensor recv,
+                                       const std::vector<int64_t>& send_splits,
+                                       const std::vector<int64_t>& recv_splits,
+                                       bool is_sync) {
+#if !defined(USE_NPU)
+  LOG(FATAL) << "alltoall_single only supported with USE_NPU";
+#else
+  check_input(send);
+  check_input(recv);
+  CHECK(send.device() == device() && recv.device() == device())
+      << "send/recv must be on the same device as the process group";
+  const int P = world_size();
+  CHECK((int)send_splits.size() == P && (int)recv_splits.size() == P)
+      << "split sizes length must equal world_size";
+
+  std::vector<uint64_t> sc(P), rc(P), sdisp(P), rdisp(P);
+  uint64_t acc = 0;
+  for (int i = 0; i < P; ++i) {
+    sc[i] = static_cast<uint64_t>(send_splits[i]);
+    sdisp[i] = acc;
+    acc += sc[i];
+  }
+  acc = 0;
+  for (int i = 0; i < P; ++i) {
+    rc[i] = static_cast<uint64_t>(recv_splits[i]);
+    rdisp[i] = acc;
+    acc += rc[i];
+  }
+
+  auto dtype = to_hccl_data_type(send);
+  auto stream = c10_npu::getCurrentNPUStream();
+  torch::DeviceGuard guard(device());
+
+  HCCLCHECK(HcclAlltoAllV(
+      /*sendBuf=*/send.data_ptr(),
+      /*sendCounts=*/sc.data(),
+      /*sdispls=*/sdisp.data(),
+      /*sendType=*/dtype,
+      /*recvBuf=*/recv.data_ptr(),
+      /*recvCounts=*/rc.data(),
+      /*rdispls=*/rdisp.data(),
+      /*recvType=*/dtype,
+      /*comm=*/comm_,
+      /*stream=*/stream));
+
+  if (is_sync) {
+    auto ev = std::make_shared<c10_npu::NPUEvent>();
+    ev->record(stream);
+    ev->synchronize();
+  }
+#endif
+}
+
+void ProcessGroupHCCL::alltoall_equal(torch::Tensor send,
+                                      torch::Tensor recv,
+                                      bool is_sync) {
+#if !defined(USE_NPU)
+  LOG(FATAL) << "alltoall_equal only supported with USE_NPU";
+#else
+  check_input(send);
+  check_input(recv);
+  const int P = world_size();
+  CHECK(send.numel() % P == 0 && recv.numel() % P == 0)
+      << "send/recv numel must be divisible by world_size";
+  const int64_t per_rank_send = send.numel() / P;
+  const int64_t per_rank_recv = recv.numel() / P;
+  std::vector<int64_t> in_splits(P, per_rank_send);
+  std::vector<int64_t> out_splits(P, per_rank_recv);
+  alltoall_single(send, recv, in_splits, out_splits, is_sync);
+#endif
+}
+
 #endif
 }  // namespace xllm
