@@ -136,6 +136,9 @@ std::optional<DiTForwardOutput> DiTWorker::step(const DiTForwardInput& inputs) {
   auto output = dit_model_executor_->forward(inputs.to(device_, dtype_));
   LOG(INFO) << "synchronize";
 #if defined(USE_NPU)
+  if (auto* pg = dit_model_executor_->parallel_args().process_group_) {
+    static_cast<ProcessGroupHCCL*>(pg)->flush_comm_to_current();
+  }
   torch::npu::synchronize();
 #elif defined(USE_MLU)
 // TODO(mlu): implement mlu synchronize stream
