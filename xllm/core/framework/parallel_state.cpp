@@ -21,6 +21,7 @@ limitations under the License.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include <acl/acl.h>
+#include <torch_npu/csrc/core/npu/NPUCachingAllocator.h>
 #include <torch_npu/csrc/core/npu/NPUEvent.h>
 #include <torch_npu/csrc/core/npu/NPUStream.h>
 
@@ -191,14 +192,20 @@ std::vector<torch::Tensor> all_gather(torch::Tensor& input,
 
 torch::Tensor all_to_all_equal(torch::Tensor& send,
                                bool is_sync,
-                               const ParallelArgs& parallel_args) {
+                               const ParallelArgs& parallel_args
+#if defined(USE_NPU)
+                               ,
+                               std::shared_ptr<c10_npu::NPUEvent>* out_done
+#endif
+) {
   const int P = parallel_args.world_size();
   if (P <= 1) return send;
   auto* pg = parallel_args.process_group_;
   CHECK(pg != nullptr) << "all_to_all_equal: process_group_ is null";
   auto recv = torch::empty_like(send);
 #if defined(USE_NPU)
-  static_cast<ProcessGroupHCCL*>(pg)->alltoall_equal(send, recv, is_sync);
+  static_cast<ProcessGroupHCCL*>(pg)->alltoall_equal(
+      send, recv, is_sync, out_done);
 #else
   LOG(FATAL) << "all_to_all_equal only implemented for NPU";
 #endif
@@ -243,7 +250,9 @@ ProcessGroupHCCL::ProcessGroupHCCL(int rank,
                                    int world_size,
                                    const torch::Device& device,
                                    HcclComm comm)
-    : ProcessGroup(rank, world_size, device), comm_(comm) {}
+    : ProcessGroup(rank, world_size, device),
+      comm_(comm),
+      comm_stream_(c10_npu::getNPUStreamFromPool(device.index())) {}
 // Destructor.
 ProcessGroupHCCL::~ProcessGroupHCCL() { HCCLCHECK(HcclCommDestroy(comm_)); }
 
@@ -251,20 +260,8 @@ void ProcessGroupHCCL::allreduce(torch::Tensor& input) {
   DCHECK(input.device() == device())
       << "input should be on the same device as the process group";
   check_input(input);
-  // inplace all reduce
-  // const auto count = input.numel();
-  // const auto data_type = to_hccl_data_type(input);
-  // auto stream = c10_npu::getCurrentNPUStream();
-  // torch::DeviceGuard device_guard(device());
-  // HCCLCHECK(HcclAllReduce(
-  //     /*sendbuff=*/input.data_ptr(),
-  //     /*recvbuff=*/input.data_ptr(),
-  //     /*count=*/count,
-  //     /*datatype=*/data_type,
-  //     /*op=*/HCCL_REDUCE_SUM,
-  //     /*comm=*/comm_,
-  //     /*stream=*/stream));
 }
+
 void ProcessGroupHCCL::allgather(torch::Tensor input,
                                  std::vector<torch::Tensor>& outputs) {
   check_input(input);
@@ -276,6 +273,7 @@ void ProcessGroupHCCL::allgather(torch::Tensor input,
   torch::Tensor flattened_output = flatten_for_scatter_gather(outputs);
   const auto count = input.numel();
   const auto data_type = to_hccl_data_type(input);
+
   auto stream = c10_npu::getCurrentNPUStream();
   HCCLCHECK(HcclAllGather(
       /*sendbuff=*/input.data_ptr(),
@@ -285,16 +283,18 @@ void ProcessGroupHCCL::allgather(torch::Tensor input,
       /*comm=*/comm_,
       /*stream=*/stream));
   // copy the flattened output tensors to the outputs.
-  for (int i = 0; i < outputs.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(outputs.size()); ++i) {
     outputs[i].copy_(flattened_output[i], /*non_blocking=*/true);
   }
 }
 
-void ProcessGroupHCCL::alltoall_single(torch::Tensor send,
-                                       torch::Tensor recv,
-                                       const std::vector<int64_t>& send_splits,
-                                       const std::vector<int64_t>& recv_splits,
-                                       bool is_sync) {
+void ProcessGroupHCCL::alltoall_single(
+    torch::Tensor send,
+    torch::Tensor recv,
+    const std::vector<int64_t>& send_splits,
+    const std::vector<int64_t>& recv_splits,
+    bool is_sync,
+    std::shared_ptr<c10_npu::NPUEvent>* out_done) {
 #if !defined(USE_NPU)
   LOG(FATAL) << "alltoall_single only supported with USE_NPU";
 #else
@@ -321,9 +321,18 @@ void ProcessGroupHCCL::alltoall_single(torch::Tensor send,
   }
 
   auto dtype = to_hccl_data_type(send);
-  auto stream = c10_npu::getCurrentNPUStream();
-  torch::DeviceGuard guard(device());
+  auto compute_stream = c10_npu::getCurrentNPUStream();
+  c10_npu::NPUEvent ready;
+  ready.record(compute_stream);
 
+  torch::DeviceGuard guard(device());
+  // const auto prev_stream = c10_npu::getCurrentNPUStream();
+  // c10_npu::setCurrentNPUStream(comm_stream_);
+  ready.block(comm_stream_);  // compute -> comm
+  c10_npu::NPUCachingAllocator::recordStream(send.storage().data_ptr(),
+                                             comm_stream_);
+  c10_npu::NPUCachingAllocator::recordStream(recv.storage().data_ptr(),
+                                             comm_stream_);
   HCCLCHECK(HcclAlltoAllV(
       /*sendBuf=*/send.data_ptr(),
       /*sendCounts=*/sc.data(),
@@ -334,19 +343,39 @@ void ProcessGroupHCCL::alltoall_single(torch::Tensor send,
       /*rdispls=*/rdisp.data(),
       /*recvType=*/dtype,
       /*comm=*/comm_,
-      /*stream=*/stream));
+      /*stream=*/comm_stream_.stream()));
 
   if (is_sync) {
-    auto ev = std::make_shared<c10_npu::NPUEvent>();
-    ev->record(stream);
-    ev->synchronize();
+    c10_npu::NPUEvent ev;
+    ev.record(comm_stream_);
+    ev.synchronize();
+  } else {
+    auto done = std::make_shared<c10_npu::NPUEvent>();
+    done->record(comm_stream_);
+
+    if (out_done) {
+      *out_done = std::move(done);
+    } else {
+      done->block(compute_stream);
+    }
   }
+  // c10_npu::setCurrentNPUStream(prev_stream);
+#endif
+}
+void ProcessGroupHCCL::flush_comm_to_current() {
+#if defined(USE_NPU)
+  auto cur = c10_npu::getCurrentNPUStream();
+  c10_npu::NPUEvent fence;
+  fence.record(comm_stream_);  // 通信流 -> 事件
+  fence.block(cur);            // 事件 -> 当前计算流
 #endif
 }
 
-void ProcessGroupHCCL::alltoall_equal(torch::Tensor send,
-                                      torch::Tensor recv,
-                                      bool is_sync) {
+void ProcessGroupHCCL::alltoall_equal(
+    torch::Tensor send,
+    torch::Tensor recv,
+    bool is_sync,
+    std::shared_ptr<c10_npu::NPUEvent>* out_done) {
 #if !defined(USE_NPU)
   LOG(FATAL) << "alltoall_equal only supported with USE_NPU";
 #else
@@ -359,9 +388,9 @@ void ProcessGroupHCCL::alltoall_equal(torch::Tensor send,
   const int64_t per_rank_recv = recv.numel() / P;
   std::vector<int64_t> in_splits(P, per_rank_send);
   std::vector<int64_t> out_splits(P, per_rank_recv);
-  alltoall_single(send, recv, in_splits, out_splits, is_sync);
+  alltoall_single(send, recv, in_splits, out_splits, is_sync, out_done);
 #endif
 }
 
-#endif
+#endif  // defined(USE_NPU)
 }  // namespace xllm

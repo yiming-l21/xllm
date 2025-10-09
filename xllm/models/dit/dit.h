@@ -62,7 +62,7 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
   TORCH_CHECK(input_.dim() == 4,
               "all_to_all_4D: input must be 4D, got dim=",
               input_.dim());
-  auto input = input_.contiguous();
+  auto input = input_;
   const int P = world_size;
   const int r = rank;
   AllToAll4DHandle h;
@@ -87,20 +87,18 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
                        .contiguous();
 
     auto send_flat = input_t.reshape({P, shard_seqlen * bs * shard_hc * hs})
-                         .contiguous()
                          .reshape({P * shard_seqlen * bs * shard_hc * hs});
 
 #if defined(USE_NPU)
-    auto recv_flat = parallel_state::all_to_all_equal(send_flat, is_sync, pg);
-    auto stream = c10_npu::getCurrentNPUStream();
     std::shared_ptr<c10_npu::NPUEvent> ev;
-    if (!is_sync) {
-      ev = std::make_shared<c10_npu::NPUEvent>();
-      ev->record(stream);
-    }
+    auto recv_flat =
+        parallel_state::all_to_all_equal(send_flat, is_sync, pg, &ev);
+    // if (!is_sync) {
+    //   h.done_event = ev;
+    //   h.done_event->block(c10_npu::getCurrentNPUStream());
+    // }
 #endif
-    auto mid =
-        recv_flat.reshape({P, shard_seqlen, bs, shard_hc, hs}).contiguous();
+    auto mid = recv_flat.reshape({P, shard_seqlen, bs, shard_hc, hs});
     h.mid = mid;
     h.bs = bs;
     h.seqlen = shard_seqlen * P;
@@ -130,19 +128,21 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
                        .transpose(0, 1)  // (P, shard_hc, shard_seqlen, bs, hs)
                        .contiguous();
 
-    auto send_flat =
-        input_t.reshape({P * shard_hc * shard_seqlen * bs * hs}).contiguous();
+    auto send_flat = input_t.reshape({P * shard_hc * shard_seqlen * bs * hs});
 #if defined(USE_NPU)
-    auto recv_flat = parallel_state::all_to_all_equal(send_flat, is_sync, pg);
-    auto stream = c10_npu::getCurrentNPUStream();
     std::shared_ptr<c10_npu::NPUEvent> ev;
-    if (!is_sync) {
-      ev = std::make_shared<c10_npu::NPUEvent>();
-      ev->record(stream);
-    }
+    auto recv_flat =
+        parallel_state::all_to_all_equal(send_flat, is_sync, pg, &ev);
+    //  if (!is_sync) {
+    //   h.done_event = ev;
+    //   h.done_event->block(c10_npu::getCurrentNPUStream());
+    // }
 #endif
-    auto mid = recv_flat.reshape({P, shard_hc, shard_seqlen, bs, hs})
-                   .contiguous();  // (P, shard_hc, shard_seqlen, bs, hs)
+    auto mid = recv_flat.reshape({P,
+                                  shard_hc,
+                                  shard_seqlen,
+                                  bs,
+                                  hs});  // (P, shard_hc, shard_seqlen, bs, hs)
     h.mid = mid;
     h.bs = bs;
     h.hc = hc;
@@ -165,7 +165,7 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
 inline torch::Tensor all_to_all_4D_post2(const AllToAll4DHandle& h) {
   TORCH_CHECK(h.use_post2, "all_to_all_4D_post2: handle not from (2->1) path");
   if (h.is_async && h.done_event) {
-    h.done_event->synchronize();
+    h.done_event->block(c10_npu::getCurrentNPUStream());
   }
   auto out = h.mid.reshape({h.seqlen, h.bs, h.shard_hc, h.hs})
                  .transpose(0, 1)  // (bs, seqlen, shard_hc, hs)
@@ -181,7 +181,7 @@ inline torch::Tensor all_to_all_4D_post2(const AllToAll4DHandle& h) {
 inline torch::Tensor all_to_all_4D_post(const AllToAll4DHandle& h) {
   TORCH_CHECK(!h.use_post2, "all_to_all_4D_post: handle not from (1->2) path");
   if (h.is_async && h.done_event) {
-    h.done_event->synchronize();
+    h.done_event->block(c10_npu::getCurrentNPUStream());
   }
   auto out = h.mid.reshape({h.hc, h.shard_seqlen, h.bs, h.hs})
                  .transpose(0, 2)  // (bs, shard_seqlen, hc, hs)
@@ -433,7 +433,7 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
           attn_output.view({batch_size, -1, attn_heads, head_dim}).contiguous();
       auto handle =
           all_to_all_4D(attn_output, rank_, world_size_, 1, 2, true, pg_);
-      attn_output = all_to_all_4D_post(handle);
+      // attn_output = all_to_all_4D_post(handle);
       attn_output = attn_output.view({batch_size, -1, inner_dim}).contiguous();
       return attn_output;
     }
@@ -588,10 +588,6 @@ class FluxAttentionImpl : public torch::nn::Module {
                       pg_);
     torch::Tensor encoder_hidden_states_query_proj =
         add_q_proj_->forward(encoder_hidden_states_reshaped);
-    torch::Tensor encoder_hidden_states_key_proj =
-        add_k_proj_->forward(encoder_hidden_states_reshaped);
-    torch::Tensor encoder_hidden_states_value_proj =
-        add_v_proj_->forward(encoder_hidden_states_reshaped);
     auto handle_eq = all_to_all_4D(encoder_hidden_states_query_proj.view(
                                        {batch_size, -1, attn_heads, head_dim}),
                                    rank_,
@@ -600,6 +596,8 @@ class FluxAttentionImpl : public torch::nn::Module {
                                    1,
                                    false,
                                    pg_);
+    torch::Tensor encoder_hidden_states_key_proj =
+        add_k_proj_->forward(encoder_hidden_states_reshaped);
     auto handle_ek = all_to_all_4D(encoder_hidden_states_key_proj.view(
                                        {batch_size, -1, attn_heads, head_dim}),
                                    rank_,
@@ -608,6 +606,8 @@ class FluxAttentionImpl : public torch::nn::Module {
                                    1,
                                    false,
                                    pg_);
+    torch::Tensor encoder_hidden_states_value_proj =
+        add_v_proj_->forward(encoder_hidden_states_reshaped);
     auto handle_ev = all_to_all_4D(encoder_hidden_states_value_proj.view(
                                        {batch_size, -1, attn_heads, head_dim}),
                                    rank_,

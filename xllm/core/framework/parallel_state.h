@@ -26,6 +26,8 @@ limitations under the License.
 #include "mapping_npu.h"
 #if defined(USE_NPU)
 #include <hccl/hccl_types.h>
+#include <torch_npu/csrc/core/npu/NPUEvent.h>
+#include <torch_npu/csrc/core/npu/NPUStream.h>
 
 #include "hccl/hccl.h"
 #include "xllm_kernels/models/base/param/mapping.h"
@@ -47,9 +49,16 @@ torch::Tensor scatter(torch::Tensor input, const ParallelArgs& parallel_args);
 
 std::vector<torch::Tensor> all_gather(torch::Tensor& input,
                                       const ParallelArgs& parallel_args);
-torch::Tensor all_to_all_equal(torch::Tensor& send,
-                               bool is_sync,
-                               const ParallelArgs& parallel_args);
+
+torch::Tensor all_to_all_equal(
+    torch::Tensor& send,
+    bool is_sync,
+    const ParallelArgs& parallel_args
+#if defined(USE_NPU)
+    ,
+    std::shared_ptr<c10_npu::NPUEvent>* out_done = nullptr
+#endif
+);
 
 }  // namespace parallel_state
 
@@ -198,14 +207,18 @@ class ProcessGroupHCCL : public ProcessGroup {
                        torch::Tensor recv,
                        const std::vector<int64_t>& send_splits,
                        const std::vector<int64_t>& recv_splits,
-                       bool is_sync = false);
+                       bool is_sync = false,
+                       std::shared_ptr<c10_npu::NPUEvent>* out_done = nullptr);
 
   void alltoall_equal(torch::Tensor send,
                       torch::Tensor recv,
-                      bool is_sync = false);
+                      bool is_sync = false,
+                      std::shared_ptr<c10_npu::NPUEvent>* out_done = nullptr);
+  void flush_comm_to_current();
 
  private:
   HcclComm comm_ = nullptr;
+  c10_npu::NPUStream comm_stream_;
 };
 #endif
 
