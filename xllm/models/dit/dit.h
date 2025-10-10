@@ -68,7 +68,6 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
   AllToAll4DHandle h;
   h.gather_idx = gather_idx;
   h.gather_pad = 0;
-
   if (scatter_idx == 2 && gather_idx == 1) {
     // branch A : from "sequence shard" -> "head shard"
     // input: (bs, shard_seqlen, hc, hs)  output (bs, seqlen, hc/P, hs)
@@ -92,12 +91,6 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
 
 #if defined(USE_NPU)
     auto recv_flat = parallel_state::all_to_all_equal(send_flat, is_sync, pg);
-    auto stream = c10_npu::getCurrentNPUStream();
-    std::shared_ptr<c10_npu::NPUEvent> ev;
-    if (!is_sync) {
-      ev = std::make_shared<c10_npu::NPUEvent>();
-      ev->record(stream);
-    }
 #endif
     auto mid =
         recv_flat.reshape({P, shard_seqlen, bs, shard_hc, hs}).contiguous();
@@ -107,7 +100,8 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
     h.shard_hc = shard_hc;
     h.hs = hs;
     h.use_post2 = true;
-    h.done_event = ev;
+    h.done_event =
+        dynamic_cast<xllm::ProcessGroupHCCL*>(pg.process_group_)->event();
     h.is_async = !is_sync;
     return h;
 
@@ -134,12 +128,6 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
         input_t.reshape({P * shard_hc * shard_seqlen * bs * hs}).contiguous();
 #if defined(USE_NPU)
     auto recv_flat = parallel_state::all_to_all_equal(send_flat, is_sync, pg);
-    auto stream = c10_npu::getCurrentNPUStream();
-    std::shared_ptr<c10_npu::NPUEvent> ev;
-    if (!is_sync) {
-      ev = std::make_shared<c10_npu::NPUEvent>();
-      ev->record(stream);
-    }
 #endif
     auto mid = recv_flat.reshape({P, shard_hc, shard_seqlen, bs, hs})
                    .contiguous();  // (P, shard_hc, shard_seqlen, bs, hs)
@@ -149,7 +137,8 @@ inline AllToAll4DHandle all_to_all_4D(const torch::Tensor& input_,
     h.shard_seqlen = shard_seqlen;
     h.hs = hs;
     h.use_post2 = false;
-    h.done_event = ev;
+    h.done_event =
+        dynamic_cast<xllm::ProcessGroupHCCL*>(pg.process_group_)->event();
     h.is_async = !is_sync;
     return h;
 
@@ -429,12 +418,10 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     attn_output = attn_output.to(query.dtype());
     if (use_sp_) {
       attn_heads = heads_ / world_size_;
-      attn_output =
-          attn_output.view({batch_size, -1, attn_heads, head_dim}).contiguous();
+      attn_output = attn_output.view({batch_size, -1, attn_heads, head_dim});
       auto handle =
           all_to_all_4D(attn_output, rank_, world_size_, 1, 2, true, pg_);
-      attn_output = all_to_all_4D_post(handle);
-      attn_output = attn_output.view({batch_size, -1, inner_dim}).contiguous();
+      attn_output = attn_output.view({batch_size, -1, inner_dim});
       return attn_output;
     }
     return attn_output.flatten(2);
@@ -1577,6 +1564,7 @@ class FluxTransformerBlockImpl : public torch::nn::Module {
     // gather the full sequence for hidden_states and the
     // encoder_hidden_states
     if (use_sp_ && (layer_id_ == num_layers_ - 1)) {
+      LOG(INFO) << "gather sequence in FluxTransformerBlock";
       pad = (world_size_ - (seq_len % world_size_)) % world_size_;
       encoder_pad =
           (world_size_ - (encoder_seq_len % world_size_)) % world_size_;
@@ -1753,12 +1741,6 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
         //       blockout_after.tensors.at("encoder_hidden_states");
         // }
       }
-      // // 1. 打印 hidden_states（shape: [1,8100,3072]）
-      // print_tensor_for_compare(hidden_states, "hidden_states", 1000, 5);
-
-      // // 2. 打印 encoder_hidden_states（shape: [1,512,3072]）
-      // print_tensor_for_compare(encoder_hidden_states,
-      // "encoder_hidden_states", 1000, 5);
       hidden_states = torch::cat({encoder_hidden_states, hidden_states}, 1);
       // CHECK_EQ(false, true);
       for (int64_t i = 0; i < single_transformer_blocks_->size(); ++i) {

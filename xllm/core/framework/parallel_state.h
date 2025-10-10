@@ -26,6 +26,8 @@ limitations under the License.
 #include "mapping_npu.h"
 #if defined(USE_NPU)
 #include <hccl/hccl_types.h>
+#include <torch_npu/csrc/core/npu/NPUEvent.h>
+#include <torch_npu/csrc/core/npu/NPUStream.h>
 
 #include "hccl/hccl.h"
 #include "xllm_kernels/models/base/param/mapping.h"
@@ -189,6 +191,8 @@ class ProcessGroupHCCL : public ProcessGroup {
   // Destructor.
   ~ProcessGroupHCCL() override;
 
+  std::shared_ptr<c10_npu::NPUEvent> event() { return event_; }
+
   void allreduce(torch::Tensor& input) override;
 
   void allgather(torch::Tensor input,
@@ -206,6 +210,8 @@ class ProcessGroupHCCL : public ProcessGroup {
 
  private:
   HcclComm comm_ = nullptr;
+  std::shared_ptr<c10_npu::NPUEvent> event_ = nullptr;
+  std::shared_ptr<c10_npu::NPUStream> comm_stream_ = nullptr;
 };
 #endif
 

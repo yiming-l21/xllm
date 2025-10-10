@@ -18,13 +18,13 @@ limitations under the License.
 #include <c10/core/Device.h>
 #if defined(USE_NPU)
 #include <hccl/hccl_types.h>
+
+#include "hccl/hccl.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include <acl/acl.h>
 #include <torch_npu/csrc/core/npu/NPUEvent.h>
 #include <torch_npu/csrc/core/npu/NPUStream.h>
-
-#include "hccl/hccl.h"
 #endif
 #pragma GCC diagnostic pop
 #include <glog/logging.h>
@@ -40,12 +40,12 @@ namespace xllm {
 
 namespace {
 #if defined(USE_NPU)
-#define HCCLCHECK(cmd)                                               \
-  do {                                                               \
-    HcclResult r = cmd;                                              \
-    if (r != HCCL_SUCCESS) {                                         \
-      LOG(FATAL) << "Failed, HCCL error :" << HcclGetErrorString(r); \
-    }                                                                \
+#define HCCLCHECK(cmd)                           \
+  do {                                           \
+    HcclResult r = cmd;                          \
+    if (r != HCCL_SUCCESS) {                     \
+      LOG(FATAL) << "Failed, HCCL error :" << r; \
+    }                                            \
   } while (0)
 #endif
 inline bool is_npu(const at::Tensor& tensor) {
@@ -243,9 +243,18 @@ ProcessGroupHCCL::ProcessGroupHCCL(int rank,
                                    int world_size,
                                    const torch::Device& device,
                                    HcclComm comm)
-    : ProcessGroup(rank, world_size, device), comm_(comm) {}
+    : ProcessGroup(rank, world_size, device), comm_(comm) {
+  comm_stream_ = std::make_shared<c10_npu::NPUStream>(
+      c10_npu::getNPUStreamFromPool(device.index()));
+  event_ = std::make_shared<c10_npu::NPUEvent>();
+}
 // Destructor.
-ProcessGroupHCCL::~ProcessGroupHCCL() { HCCLCHECK(HcclCommDestroy(comm_)); }
+ProcessGroupHCCL::~ProcessGroupHCCL() {
+  if (comm_stream_) {
+    comm_stream_->synchronize();
+  }
+  HCCLCHECK(HcclCommDestroy(comm_));
+}
 
 void ProcessGroupHCCL::allreduce(torch::Tensor& input) {
   DCHECK(input.device() == device())
@@ -323,7 +332,6 @@ void ProcessGroupHCCL::alltoall_single(torch::Tensor send,
   auto dtype = to_hccl_data_type(send);
   auto stream = c10_npu::getCurrentNPUStream();
   torch::DeviceGuard guard(device());
-
   HCCLCHECK(HcclAlltoAllV(
       /*sendBuf=*/send.data_ptr(),
       /*sendCounts=*/sc.data(),
@@ -334,12 +342,10 @@ void ProcessGroupHCCL::alltoall_single(torch::Tensor send,
       /*rdispls=*/rdisp.data(),
       /*recvType=*/dtype,
       /*comm=*/comm_,
-      /*stream=*/stream));
-
+      /*stream=*/*comm_stream_));
+  event_->record(*comm_stream_);
   if (is_sync) {
-    auto ev = std::make_shared<c10_npu::NPUEvent>();
-    ev->record(stream);
-    ev->synchronize();
+    event_->synchronize();
   }
 #endif
 }
