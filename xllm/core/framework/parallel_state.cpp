@@ -45,7 +45,7 @@ namespace {
   do {                                                               \
     HcclResult r = cmd;                                              \
     if (r != HCCL_SUCCESS) {                                         \
-      LOG(FATAL) << "Failed, HCCL error :" << HcclGetErrorString(r); \
+      LOG(FATAL) << "Failed, HCCL error :" ; \
     }                                                                \
   } while (0)
 #endif

@@ -12,6 +12,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "core/framework/dit_cache/dit_cache.h"
@@ -337,7 +338,8 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
       const torch::Tensor& hidden_states,
       const torch::Tensor& encoder_hidden_states,
       int64_t attn_heads,
-      int64_t head_dim) {
+      int64_t head_dim,
+      const torch::Tensor& image_rotary_emb) {
     int64_t batch_size = encoder_hidden_states.size(0);
     torch::Tensor query = to_q_->forward(hidden_states);
     auto handle_q =
@@ -366,14 +368,22 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
                       1,
                       false,
                       pg_);
+
     query = all_to_all_4D_post2(handle_q);
     key = all_to_all_4D_post2(handle_k);
+    // Apply Q/K normalization if enabled
+    if (norm_q_) query = norm_q_->forward(query);
+    if (norm_k_) key = norm_k_->forward(key);
+    // Apply rotary positional embedding
+    query = apply_rotary_emb(query, image_rotary_emb, false);
+    key = apply_rotary_emb(key, image_rotary_emb, false);
+
     value = all_to_all_4D_post2(handle_v);
     return std::make_tuple(query, key, value);
   }
-
-  torch::Tensor forward(const torch::Tensor& hidden_states,
-                        const torch::Tensor& image_rotary_emb) {
+  using TensorORhandle = std::variant<torch::Tensor, AllToAll4DHandle>;
+  TensorORhandle forward(const torch::Tensor& hidden_states,
+                         const torch::Tensor& image_rotary_emb) {
     int64_t batch_size, channel, height, width;
 
     // Reshape 4D input to [B, seq_len, C]
@@ -387,8 +397,8 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     torch::Tensor context = hidden_states_;
     torch::Tensor query, key, value;
     if (use_sp_) {
-      std::tie(query, key, value) =
-          cmo_matmul_all2all(hidden_states_, context, attn_heads, head_dim);
+      std::tie(query, key, value) = cmo_matmul_all2all(
+          hidden_states_, context, attn_heads, head_dim, image_rotary_emb);
     } else {
       // Compute QKV projections
       query = to_q_->forward(hidden_states_);
@@ -399,14 +409,14 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
       query = query.view({batch_size, -1, attn_heads, head_dim}).contiguous();
       key = key.view({batch_size, -1, attn_heads, head_dim}).contiguous();
       value = value.view({batch_size, -1, attn_heads, head_dim}).contiguous();
+      // Apply Q/K normalization if enabled
+      if (norm_q_) query = norm_q_->forward(query);
+      if (norm_k_) key = norm_k_->forward(key);
+      // Apply rotary positional embedding
+      query = apply_rotary_emb(query, image_rotary_emb, false);
+      key = apply_rotary_emb(key, image_rotary_emb, false);
     }
 
-    // Apply Q/K normalization if enabled
-    if (norm_q_) query = norm_q_->forward(query);
-    if (norm_k_) key = norm_k_->forward(key);
-    // Apply rotary positional embedding
-    query = apply_rotary_emb(query, image_rotary_emb, false);
-    key = apply_rotary_emb(key, image_rotary_emb, false);
     // Compute scaled dot-product attention (no mask, no dropout)
     // torch::Tensor attn_output = torch::scaled_dot_product_attention(
     //    query, key, value, torch::nullopt, 0.0, false);
@@ -433,9 +443,7 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
           attn_output.view({batch_size, -1, attn_heads, head_dim}).contiguous();
       auto handle =
           all_to_all_4D(attn_output, rank_, world_size_, 1, 2, true, pg_);
-      // attn_output = all_to_all_4D_post(handle);
-      attn_output = attn_output.view({batch_size, -1, inner_dim}).contiguous();
-      return attn_output;
+      return handle;
     }
     return attn_output.flatten(2);
   }
@@ -1433,8 +1441,23 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
     }
     auto residual = hidden_states_;
     auto [norm_hidden_states, gate] = norm_(hidden_states_, temb);
+
+    auto tensor_or_handle =
+        attn_->forward(norm_hidden_states, image_rotary_emb);
+    torch::Tensor attn_output;
+    xllm::AllToAll4DHandle handle;
+    if (std::holds_alternative<torch::Tensor>(tensor_or_handle)) {
+      attn_output = std::get<torch::Tensor>(tensor_or_handle);
+    } else {
+      handle = std::get<xllm::AllToAll4DHandle>(tensor_or_handle);
+    }
     auto mlp_hidden_states = act_mlp_(proj_mlp_(norm_hidden_states));
-    auto attn_output = attn_->forward(norm_hidden_states, image_rotary_emb);
+    if (use_sp_) {
+      attn_output = all_to_all_4D_post(handle);
+      attn_output =
+          attn_output.view({hidden_states_.size(0), -1, hidden_states_.size(2)})
+              .contiguous();
+    }
     auto hidden_states_cat = torch::cat({attn_output, mlp_hidden_states}, 2);
     auto out = proj_out_(hidden_states_cat);
     out = gate.unsqueeze(1) * out;
