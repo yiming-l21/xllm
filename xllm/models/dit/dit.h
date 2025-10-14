@@ -33,6 +33,36 @@
 //   https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_flux.py
 namespace xllm {
 
+int32_t SEQ_PAD = 0;
+int32_t HEAD_PAD = 0;
+int32_t ENCODER_SEQ_PAD = 0;
+int32_t ENCODER_HEAD_PAD = 0;
+
+void set_seq_pad(int32_t seq_len, int32_t world_size) {
+  SEQ_PAD = (world_size - (seq_len % world_size)) % world_size;
+}
+
+void set_head_pad(int32_t head_len, int32_t world_size) {
+  HEAD_PAD = (world_size - (head_len % world_size)) % world_size;
+}
+
+void set_encoder_seq_pad(int32_t encoder_seq_len, int32_t world_size) {
+  ENCODER_SEQ_PAD = (world_size - (encoder_seq_len % world_size)) % world_size;
+}
+
+void set_encoder_head_pad(int32_t encoder_head_len, int32_t world_size) {
+  ENCODER_HEAD_PAD =
+      (world_size - (encoder_head_len % world_size)) % world_size;
+}
+
+int32_t get_seq_pad() { return SEQ_PAD; }
+
+int32_t get_head_pad() { return HEAD_PAD; }
+
+int32_t get_encoder_seq_pad() { return ENCODER_SEQ_PAD; }
+
+int32_t get_encoder_head_pad() { return ENCODER_HEAD_PAD; }
+
 struct AllToAll4DHandle {
   torch::Tensor mid;  // branch A: (P, shard_seqlen, bs, shard_hc, hs)
                       // branch B: (P, shard_hc,     shard_seqlen, bs, hs)
@@ -752,7 +782,6 @@ class FluxAttentionImpl : public torch::nn::Module {
                              encoder_hidden_states_reshaped,
                              attn_heads,
                              head_dim);
-
     } else {
       std::tie(query1,
                key1,
@@ -1434,8 +1463,9 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
       const torch::Tensor& image_rotary_emb = torch::Tensor()) {
     torch::Tensor hidden_states_ = hidden_states;
     if (use_sp_ && layer_id_ == 0) {
-      int32_t seq_len = hidden_states_.size(1);
-      int64_t pad = (world_size_ - (seq_len % world_size_)) % world_size_;
+      int32_t seq_len = hidden_states.size(1);
+      set_seq_pad(seq_len, world_size_);
+      int32_t pad = get_seq_pad();
       hidden_states_ =
           split_sequence(hidden_states_, world_size_, rank_, 1, pad);
     }
@@ -1463,9 +1493,7 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
     out = gate.unsqueeze(1) * out;
     out = residual + out;
     if (use_sp_ && layer_id_ == num_layers_ - 1) {
-      int32_t seq_len = out.size(1);
-      int64_t pad = (world_size_ - (seq_len % world_size_)) % world_size_;
-      out = gather_sequence(out, world_size_, 1, pad, pg_);
+      out = gather_sequence(out, world_size_, 1, get_seq_pad(), pg_);
     }
     // if (out.scalar_type() == torch::kFloat16) {
     //   out = torch::clamp(out, -65504.0f, 65504.0f);
@@ -1516,6 +1544,8 @@ class FluxTransformerBlockImpl : public torch::nn::Module {
     world_size_ = pg_.world_size();
     rank_ = pg_.rank();
     auto num_attention_heads = model_args.dit_num_attention_heads();
+    set_head_pad(num_attention_heads, world_size_);
+    set_encoder_head_pad(num_attention_heads, world_size_);
     auto attention_head_dim = model_args.dit_attention_head_dim();
 
     auto dim = num_attention_heads * attention_head_dim;
@@ -1556,9 +1586,10 @@ class FluxTransformerBlockImpl : public torch::nn::Module {
     if (use_sp_ && layer_id_ == 0) {
       seq_len = hidden_states_.size(1);
       encoder_seq_len = encoder_hidden_states_.size(1);
-      pad = (world_size_ - (seq_len % world_size_)) % world_size_;
-      encoder_pad =
-          (world_size_ - (encoder_seq_len % world_size_)) % world_size_;
+      set_seq_pad(seq_len, world_size_);
+      set_encoder_seq_pad(encoder_seq_len, world_size_);
+      pad = get_seq_pad();
+      encoder_pad = get_encoder_seq_pad();
       hidden_states_ =
           split_sequence(hidden_states_, world_size_, rank_, 1, pad);
       encoder_hidden_states_ = split_sequence(
@@ -1600,9 +1631,8 @@ class FluxTransformerBlockImpl : public torch::nn::Module {
     // gather the full sequence for hidden_states and the
     // encoder_hidden_states
     if (use_sp_ && (layer_id_ == num_layers_ - 1)) {
-      pad = (world_size_ - (seq_len % world_size_)) % world_size_;
-      encoder_pad =
-          (world_size_ - (encoder_seq_len % world_size_)) % world_size_;
+      pad = get_seq_pad();
+      encoder_pad = get_encoder_seq_pad();
       new_hidden_states =
           gather_sequence(new_hidden_states, world_size_, 1, pad, pg_);
       new_encoder_hidden_states = gather_sequence(
