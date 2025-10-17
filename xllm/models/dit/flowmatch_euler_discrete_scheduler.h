@@ -20,13 +20,13 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
  public:
   explicit FlowMatchEulerDiscreteSchedulerImpl(const ModelContext& context)
       : args_(context.get_model_args()) {
-    num_train_timesteps_ = args_.scheduler_num_train_timesteps();
-    shift_ = args_.scheduler_shift();
-    use_dynamic_shifting_ = args_.scheduler_use_dynamic_shifting();
-    base_shift_ = args_.scheduler_base_shift();
-    max_shift_ = args_.scheduler_max_shift(),
-    base_image_seq_len_ = args_.scheduler_base_image_seq_len();
-    max_image_seq_len_ = args_.scheduler_max_image_seq_len();
+    num_train_timesteps_ = args_.num_train_timesteps();
+    shift_ = args_.shift();
+    use_dynamic_shifting_ = args_.use_dynamic_shifting();
+    base_shift_ = args_.base_shift();
+    max_shift_ = args_.max_shift(),
+    base_image_seq_len_ = args_.base_image_seq_len();
+    max_image_seq_len_ = args_.max_image_seq_len();
     shift_terminal_ = std::nullopt;
     time_shift_type_ = "exponential";
     std::vector<float> timesteps_vec(num_train_timesteps_);
@@ -368,12 +368,12 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
 TORCH_MODULE(FlowMatchEulerDiscreteScheduler);
 
 REGISTER_MODEL_ARGS(FlowMatchEulerDiscreteScheduler, [&] {
-  LOAD_ARG_OR(scheduler_num_train_timesteps, "num_train_timesteps", 1000);
-  LOAD_ARG_OR(scheduler_shift, "shift", 1);
-  LOAD_ARG_OR(scheduler_use_dynamic_shifting, "use_dynamic_shifting", true);
-  LOAD_ARG_OR(scheduler_base_shift, "base_shift", 0.5f);
-  LOAD_ARG_OR(scheduler_max_shift, "max_shift", 1.15f);
-  LOAD_ARG_OR(scheduler_base_image_seq_len, "base_image_seq_len", 256);
-  LOAD_ARG_OR(scheduler_max_image_seq_len, "max_image_seq_len", 4096);
+  LOAD_ARG_OR(num_train_timesteps, "num_train_timesteps", 1000);
+  LOAD_ARG_OR(shift, "shift", 1);
+  LOAD_ARG_OR(use_dynamic_shifting, "use_dynamic_shifting", true);
+  LOAD_ARG_OR(base_shift, "base_shift", 0.5f);
+  LOAD_ARG_OR(max_shift, "max_shift", 1.15f);
+  LOAD_ARG_OR(base_image_seq_len, "base_image_seq_len", 256);
+  LOAD_ARG_OR(max_image_seq_len, "max_image_seq_len", 4096);
 });
 }  // namespace xllm

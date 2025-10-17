@@ -37,13 +37,13 @@ class VAEImageProcessorImpl : public torch::nn::Module {
  public:
   VAEImageProcessorImpl(ModelContext context) {
     const auto& model_args = context.get_model_args();
-    vae_scale_factor_ = 1 << (model_args.vae_block_out_channels().size() - 1);
+    scale_factor_ = 1 << (model_args.block_out_channels().size() - 1);
   }
 
   std::pair<int64_t, int64_t> adjust_dimensions(int64_t height,
                                                 int64_t width) const {
-    height = height - (height % vae_scale_factor_);
-    width = width - (width % vae_scale_factor_);
+    height = height - (height % scale_factor_);
+    width = width - (width % scale_factor_);
     return {height, width};
   }
 
@@ -169,7 +169,7 @@ class VAEImageProcessorImpl : public torch::nn::Module {
   }
 
  private:
-  int vae_scale_factor_ = 8;
+  int scale_factor_ = 8;
   bool do_resize_ = true;
   bool do_normalize_ = true;
   bool do_binarize_ = false;
@@ -182,11 +182,11 @@ class AttentionImpl : public torch::nn::Module {
  public:
   AttentionImpl(ModelContext context) {
     ModelArgs model_args = context.get_model_args();
-    int64_t query_dim = model_args.vae_block_out_channels().back();
-    int64_t head_dim = model_args.vae_block_out_channels().back();
+    int64_t query_dim = model_args.block_out_channels().back();
+    int64_t head_dim = model_args.block_out_channels().back();
     int64_t num_heads = query_dim / head_dim;
     num_heads_ = num_heads;
-    int64_t norm_num_groups = model_args.vae_norm_num_groups();
+    int64_t norm_num_groups = model_args.norm_num_groups();
     if (norm_num_groups > 0) {
       group_norm_ =
           register_module("group_norm",
@@ -379,7 +379,7 @@ class ResnetBlock2DImpl : public torch::nn::Module {
         out_channels_(out_channels),
         time_embedding_norm_(time_embedding_norm) {
     ModelArgs model_args = context.get_model_args();
-    int64_t groups_out_val = model_args.vae_norm_num_groups();
+    int64_t groups_out_val = model_args.norm_num_groups();
 
     norm1_ =
         register_module("norm1",
@@ -508,11 +508,11 @@ class UNetMidBlock2DImpl : public torch::nn::Module {
     ModelArgs model_args = context.get_model_args();
     resnets_ = register_module("resnets", torch::nn::ModuleList());
     attentions_ = register_module("attentions", torch::nn::ModuleList());
-    int64_t in_channels = model_args.vae_block_out_channels().back();
-    add_attention_ = model_args.vae_mid_block_add_attention();
+    int64_t in_channels = model_args.block_out_channels().back();
+    add_attention_ = model_args.mid_block_add_attention();
     resnets_->push_back(
         ResnetBlock2D(context, in_channels, in_channels, "default"));
-    int64_t attn_head_dim = model_args.vae_block_out_channels().back();
+    int64_t attn_head_dim = model_args.block_out_channels().back();
     int64_t num_heads = in_channels / attn_head_dim;
     if (add_attention_) {
       attentions_->push_back(Attention(context));
@@ -568,7 +568,7 @@ class DownEncoderBlock2DImpl : public torch::nn::Module {
                          int64_t out_channels,
                          bool add_downsample = true) {
     ModelArgs model_args = context.get_model_args();
-    int64_t num_layers = model_args.vae_layers_per_block();
+    int64_t num_layers = model_args.layers_per_block();
     resnets_ = register_module("resnets", torch::nn::ModuleList());
     downsamplers_ = register_module("downsamplers", torch::nn::ModuleList());
     // initialize resnet blocks
@@ -637,7 +637,7 @@ class UpDecoderBlock2DImpl : public torch::nn::Module {
                        int64_t out_channels,
                        bool add_upsample = true) {
     ModelArgs model_args = context.get_model_args();
-    int64_t num_layers = model_args.vae_layers_per_block() + 1;
+    int64_t num_layers = model_args.layers_per_block() + 1;
     resnets_ = register_module("resnets", torch::nn::ModuleList());
 
     for (int64_t i = 0; i < num_layers; ++i) {
@@ -704,18 +704,18 @@ class VAEEncoderImpl : public torch::nn::Module {
     down_blocks_ = register_module("down_blocks", torch::nn::ModuleList());
     conv_in_ = register_module(
         "conv_in",
-        torch::nn::Conv2d(
-            torch::nn::Conv2dOptions(
-                args.vae_in_channels(), args.vae_block_out_channels()[0], 3)
-                .stride(1)
-                .padding(1)
-                .bias(true)));
+        torch::nn::Conv2d(torch::nn::Conv2dOptions(args.in_channels(),
+                                                   args.block_out_channels()[0],
+                                                   3)
+                              .stride(1)
+                              .padding(1)
+                              .bias(true)));
     // downblocks
-    int32_t output_channels = args.vae_block_out_channels()[0];
-    for (size_t i = 0; i < args.vae_down_block_types().size(); i++) {
+    int32_t output_channels = args.block_out_channels()[0];
+    for (size_t i = 0; i < args.down_block_types().size(); i++) {
       int32_t input_channels = output_channels;
-      output_channels = args.vae_block_out_channels()[i];
-      bool is_final_block = (i == args.vae_block_out_channels().size() - 1);
+      output_channels = args.block_out_channels()[i];
+      bool is_final_block = (i == args.block_out_channels().size() - 1);
       auto down_block = DownEncoderBlock2D(
           context, input_channels, output_channels, !is_final_block);
       down_blocks_->push_back(down_block);
@@ -725,16 +725,15 @@ class VAEEncoderImpl : public torch::nn::Module {
     conv_norm_out_ = register_module(
         "conv_norm_out",
         torch::nn::GroupNorm(
-            torch::nn::GroupNormOptions(args.vae_norm_num_groups(),
-                                        args.vae_block_out_channels().back())
+            torch::nn::GroupNormOptions(args.norm_num_groups(),
+                                        args.block_out_channels().back())
                 .eps(1e-6)));
     conv_act_ = register_module("conv_act", torch::nn::Functional(torch::silu));
     conv_out_ = register_module(
         "conv_out",
         torch::nn::Conv2d(
-            torch::nn::Conv2dOptions(args.vae_block_out_channels().back(),
-                                     2 * args.vae_latent_channels(),
-                                     3)
+            torch::nn::Conv2dOptions(
+                args.block_out_channels().back(), 2 * args.latent_channels(), 3)
                 .padding(1)
                 .bias(true)));
   }
@@ -796,9 +795,8 @@ class VAEDecoderImpl : public torch::nn::Module {
     conv_in_ = register_module(
         "conv_in",
         torch::nn::Conv2d(
-            torch::nn::Conv2dOptions(args.vae_latent_channels(),
-                                     args.vae_block_out_channels().back(),
-                                     3)
+            torch::nn::Conv2dOptions(
+                args.latent_channels(), args.block_out_channels().back(), 3)
                 .stride(1)
                 .padding(1)
                 .bias(true)));
@@ -806,15 +804,14 @@ class VAEDecoderImpl : public torch::nn::Module {
     mid_block_ = register_module("mid_block", UNetMidBlock2D(context));
     // up blocks
     std::vector<int64_t> reversed_block_out_channels(
-        args.vae_block_out_channels().rbegin(),
-        args.vae_block_out_channels().rend());
+        args.block_out_channels().rbegin(), args.block_out_channels().rend());
     int64_t output_channel = reversed_block_out_channels[0];
 
-    for (size_t i = 0; i < args.vae_up_block_types().size(); ++i) {
-      const std::string& up_block_type = args.vae_up_block_types()[i];
+    for (size_t i = 0; i < args.up_block_types().size(); ++i) {
+      const std::string& up_block_type = args.up_block_types()[i];
       int64_t prev_output_channel = output_channel;
       output_channel = reversed_block_out_channels[i];
-      bool is_final_block = (i == args.vae_block_out_channels().size() - 1);
+      bool is_final_block = (i == args.block_out_channels().size() - 1);
       // Create the up block using the factory function
       auto up_block = UpDecoderBlock2D(
           context, prev_output_channel, output_channel, !is_final_block);
@@ -824,20 +821,19 @@ class VAEDecoderImpl : public torch::nn::Module {
     }
     conv_norm_out_ = register_module(
         "conv_norm_out",
-        torch::nn::GroupNorm(
-            torch::nn::GroupNormOptions(
-                args.vae_norm_num_groups(),       // num_groups
-                args.vae_block_out_channels()[0]  // num_channels
-                )
-                .eps(1e-6)));
+        torch::nn::GroupNorm(torch::nn::GroupNormOptions(
+                                 args.norm_num_groups(),       // num_groups
+                                 args.block_out_channels()[0]  // num_channels
+                                 )
+                                 .eps(1e-6)));
     conv_act_ = register_module("conv_act", torch::nn::Functional(torch::silu));
     conv_out_ = register_module(
         "conv_out",
-        torch::nn::Conv2d(
-            torch::nn::Conv2dOptions(
-                args.vae_block_out_channels()[0], args.vae_out_channels(), 3)
-                .padding(1)
-                .bias(true)));
+        torch::nn::Conv2d(torch::nn::Conv2dOptions(args.block_out_channels()[0],
+                                                   args.out_channels(),
+                                                   3)
+                              .padding(1)
+                              .bias(true)));
   }
 
   torch::Tensor forward(const torch::Tensor& latents) {
@@ -892,34 +888,33 @@ class VAEImpl : public torch::nn::Module {
   VAEImpl(const ModelContext& context) : args_(context.get_model_args()) {
     encoder_ = register_module("encoder", VAEEncoder(context));
     decoder_ = register_module("decoder", VAEDecoder(context));
-    if (args_.vae_use_quant_conv()) {
-      quant_conv_ = register_module("quant_conv",
-                                    torch::nn::Conv2d(torch::nn::Conv2dOptions(
-                                        2 * args_.vae_latent_channels(),
-                                        2 * args_.vae_latent_channels(),
-                                        1)));
+    if (args_.use_quant_conv()) {
+      quant_conv_ = register_module(
+          "quant_conv",
+          torch::nn::Conv2d(torch::nn::Conv2dOptions(
+              2 * args_.latent_channels(), 2 * args_.latent_channels(), 1)));
     }
-    if (args_.vae_use_post_quant_conv()) {
+    if (args_.use_post_quant_conv()) {
       post_quant_conv_ = register_module(
           "post_quant_conv",
           torch::nn::Conv2d(torch::nn::Conv2dOptions(
-              args_.vae_latent_channels(), args_.vae_latent_channels(), 1)));
+              args_.latent_channels(), args_.latent_channels(), 1)));
     }
 
     auto dtype = context.get_tensor_options().dtype().toScalarType();
     encoder_->to(dtype);
     decoder_->to(dtype);
-    if (args_.vae_use_quant_conv()) {
+    if (args_.use_quant_conv()) {
       quant_conv_->to(dtype);
     }
-    if (args_.vae_use_post_quant_conv()) {
+    if (args_.use_post_quant_conv()) {
       post_quant_conv_->to(dtype);
     }
   }
 
   torch::Tensor encode(const torch::Tensor& images) {
     auto enc = encoder_(images);
-    if (args_.vae_use_quant_conv()) {
+    if (args_.use_quant_conv()) {
       enc = quant_conv_(enc);
     }
     return enc;
@@ -928,7 +923,7 @@ class VAEImpl : public torch::nn::Module {
   torch::Tensor decode(const torch::Tensor& latents) {
     torch::Tensor processed_latents = latents;
 
-    if (args_.vae_use_post_quant_conv()) {
+    if (args_.use_post_quant_conv()) {
       processed_latents = post_quant_conv_(processed_latents);
     }
 
@@ -940,13 +935,13 @@ class VAEImpl : public torch::nn::Module {
     for (const auto& state_dict : loader->get_state_dicts()) {
       encoder_->load_state_dict(state_dict->get_dict_with_prefix("encoder."));
       decoder_->load_state_dict(state_dict->get_dict_with_prefix("decoder."));
-      if (args_.vae_use_quant_conv()) {
+      if (args_.use_quant_conv()) {
         copy_param_from_state_dict(
             *state_dict, "quant_conv.weight", quant_conv_->weight);
         copy_param_from_state_dict(
             *state_dict, "quant_conv.bias", quant_conv_->bias);
       }
-      if (args_.vae_use_post_quant_conv()) {
+      if (args_.use_post_quant_conv()) {
         copy_param_from_state_dict(
             *state_dict, "post_quant_conv.weight", post_quant_conv_->weight);
         copy_param_from_state_dict(
@@ -968,33 +963,32 @@ TORCH_MODULE(VAE);
 
 // register the VAE model with the model registry
 REGISTER_MODEL_ARGS(AutoencoderKL, [&] {
-  LOAD_ARG_OR(vae_in_channels, "in_channels", 3);
-  LOAD_ARG_OR(vae_out_channels, "out_channels", 3);
-  LOAD_ARG_OR(vae_down_block_types,
+  LOAD_ARG_OR(in_channels, "in_channels", 3);
+  LOAD_ARG_OR(out_channels, "out_channels", 3);
+  LOAD_ARG_OR(down_block_types,
               "down_block_types",
               (std::vector<std::string>{"DownEncoderBlock2D",
                                         "DownEncoderBlock2D",
                                         "DownEncoderBlock2D",
                                         "DownEncoderBlock2D"}));
-  LOAD_ARG_OR(vae_up_block_types,
+  LOAD_ARG_OR(up_block_types,
               "up_block_types",
               (std::vector<std::string>{"UpDecoderBlock2D",
                                         "UpDecoderBlock2D",
                                         "UpDecoderBlock2D",
                                         "UpDecoderBlock2D"}));
-  LOAD_ARG_OR(vae_block_out_channels,
+  LOAD_ARG_OR(block_out_channels,
               "block_out_channels",
               (std::vector<int64_t>{128, 256, 512, 512}));
-  LOAD_ARG_OR(vae_layers_per_block, "layers_per_block", 2);
-  LOAD_ARG_OR(vae_act_fn, "act_fn", "silu");
-  LOAD_ARG_OR(vae_latent_channels, "latent_channels", 16);
-  LOAD_ARG_OR(vae_norm_num_groups, "norm_num_groups", 32);
-  LOAD_ARG_OR(vae_sample_size, "sample_size", 1024);
-  LOAD_ARG_OR(vae_scale_factor, "scale_factor", 0.3611f);
-  LOAD_ARG_OR(vae_shift_factor, "shift_factor", 0.1159f);
-  LOAD_ARG_OR(vae_mid_block_add_attention, "mid_block_add_attention", true);
-  LOAD_ARG_OR(vae_force_upcast, "force_upcast", true);
-  LOAD_ARG_OR(vae_use_quant_conv, "use_quant_conv", false);
-  LOAD_ARG_OR(vae_use_post_quant_conv, "use_post_quant_conv", false);
+  LOAD_ARG_OR(layers_per_block, "layers_per_block", 2);
+  LOAD_ARG_OR(latent_channels, "latent_channels", 16);
+  LOAD_ARG_OR(norm_num_groups, "norm_num_groups", 32);
+  LOAD_ARG_OR(sample_size, "sample_size", 1024);
+  LOAD_ARG_OR(scale_factor, "scale_factor", 0.3611f);
+  LOAD_ARG_OR(shift_factor, "shift_factor", 0.1159f);
+  LOAD_ARG_OR(mid_block_add_attention, "mid_block_add_attention", true);
+  LOAD_ARG_OR(force_upcast, "force_upcast", true);
+  LOAD_ARG_OR(use_quant_conv, "use_quant_conv", false);
+  LOAD_ARG_OR(use_post_quant_conv, "use_post_quant_conv", false);
 });
 }  // namespace xllm

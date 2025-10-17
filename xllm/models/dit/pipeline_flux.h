@@ -206,12 +206,12 @@ class FluxPipelineImpl : public torch::nn::Module {
   explicit FluxPipelineImpl(const DiTModelContext& context)
       : options_(context.get_tensor_options()) {
     const auto& model_args = context.get_model_args("vae");
-    vae_scale_factor_ = 1 << (model_args.vae_block_out_channels().size() - 1);
+    vae_scale_factor_ = 1 << (model_args.block_out_channels().size() - 1);
     _execution_device = options_.device();
     _execution_dtype = options_.dtype().toScalarType();
 
-    vae_shift_factor_ = model_args.vae_shift_factor();
-    vae_scaling_factor_ = model_args.vae_scale_factor();
+    vae_shift_factor_ = model_args.shift_factor();
+    vae_scaling_factor_ = model_args.scale_factor();
     default_sample_size_ = 128;
     tokenizer_max_length_ = 77;  // TODO: get from config file
     LOG(INFO) << "Initializing Flux pipeline...";
@@ -220,8 +220,8 @@ class FluxPipelineImpl : public torch::nn::Module {
     LOG(INFO) << "VAE initialized.";
     pos_embed_ = register_module(
         "pos_embed",
-        FluxPosEmbed(
-            10000, context.get_model_args("transformer").dit_axes_dims_rope()));
+        FluxPosEmbed(10000,
+                     context.get_model_args("transformer").axes_dims_rope()));
     transformer_ = FluxDiTModel(context.get_model_context("transformer"));
     LOG(INFO) << "DiT transformer initialized.";
     t5_ = T5EncoderModel(context.get_model_context("text_encoder_2"));

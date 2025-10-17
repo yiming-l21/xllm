@@ -125,8 +125,8 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
   FluxSingleAttentionImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    heads_ = model_args.dit_num_attention_heads();
-    auto head_dim = model_args.dit_attention_head_dim();
+    heads_ = model_args.n_heads();
+    auto head_dim = model_args.head_dim();
     auto query_dim = heads_ * head_dim;
     auto out_dim = query_dim;
     to_q_ = register_module("to_q",
@@ -265,8 +265,8 @@ class FluxAttentionImpl : public torch::nn::Module {
   FluxAttentionImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    heads_ = model_args.dit_num_attention_heads();
-    auto head_dim = model_args.dit_attention_head_dim();
+    heads_ = model_args.n_heads();
+    auto head_dim = model_args.head_dim();
     auto query_dim = heads_ * head_dim;
     auto out_dim = query_dim;
     auto added_kv_proj_dim = query_dim;
@@ -596,9 +596,8 @@ class PixArtAlphaTextProjectionImpl : public torch::nn::Module {
   PixArtAlphaTextProjectionImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    int64_t hidden_size = model_args.dit_attention_head_dim() *
-                          model_args.dit_num_attention_heads();
-    int64_t in_features = model_args.dit_pooled_projection_dim();
+    int64_t hidden_size = model_args.head_dim() * model_args.n_heads();
+    int64_t in_features = model_args.pooled_projection_dim();
     int64_t out_dim =
         hidden_size;  //(out_features == -1) ? hidden_size : out_features;
     linear_1_ =
@@ -853,9 +852,8 @@ class CombinedTimestepTextProjEmbeddingsImpl : public torch::nn::Module {
   CombinedTimestepTextProjEmbeddingsImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    auto embedding_dim = model_args.dit_attention_head_dim() *
-                         model_args.dit_num_attention_heads();
-    auto pooled_projection_dim = model_args.dit_pooled_projection_dim();
+    auto embedding_dim = model_args.head_dim() * model_args.n_heads();
+    auto pooled_projection_dim = model_args.pooled_projection_dim();
     time_proj_ = Timesteps(256, true, 0.0f, 1);
 
     timestep_embedder_ = TimestepEmbedding(
@@ -903,9 +901,8 @@ class CombinedTimestepGuidanceTextProjEmbeddingsImpl
                        // downscale_freq_shift=0, scale=1
   {
     auto model_args = context.get_model_args();
-    auto embedding_dim = model_args.dit_attention_head_dim() *
-                         model_args.dit_num_attention_heads();
-    auto pooled_projection_dim = model_args.dit_pooled_projection_dim();
+    auto embedding_dim = model_args.head_dim() * model_args.n_heads();
+    auto pooled_projection_dim = model_args.pooled_projection_dim();
 
     text_embedder_ = PixArtAlphaTextProjection(context);
     timestep_embedder_ = TimestepEmbedding(
@@ -1181,8 +1178,8 @@ class FeedForwardImpl : public torch::nn::Module {
   FeedForwardImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    auto num_attention_heads = model_args.dit_num_attention_heads();
-    auto attention_head_dim = model_args.dit_attention_head_dim();
+    auto num_attention_heads = model_args.n_heads();
+    auto attention_head_dim = model_args.head_dim();
     auto dim = num_attention_heads * attention_head_dim;
     auto inner_dim = dim * 4;
     auto dim_out = dim;
@@ -1253,8 +1250,8 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
   FluxSingleTransformerBlockImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    auto num_attention_heads = model_args.dit_num_attention_heads();
-    auto attention_head_dim = model_args.dit_attention_head_dim();
+    auto num_attention_heads = model_args.n_heads();
+    auto attention_head_dim = model_args.head_dim();
     auto dim = num_attention_heads * attention_head_dim;
     mlp_hidden_dim_ = dim * 4;
 
@@ -1347,8 +1344,8 @@ class FluxTransformerBlockImpl : public torch::nn::Module {
   FluxTransformerBlockImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    auto num_attention_heads = model_args.dit_num_attention_heads();
-    auto attention_head_dim = model_args.dit_attention_head_dim();
+    auto num_attention_heads = model_args.n_heads();
+    auto attention_head_dim = model_args.head_dim();
 
     auto dim = num_attention_heads * attention_head_dim;
     double eps = 1e-6;
@@ -1447,17 +1444,17 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
   FluxTransformer2DModelImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
-    auto num_attention_heads = model_args.dit_num_attention_heads();
-    auto attention_head_dim = model_args.dit_attention_head_dim();
+    auto num_attention_heads = model_args.n_heads();
+    auto attention_head_dim = model_args.head_dim();
     auto inner_dim = num_attention_heads * attention_head_dim;
-    auto pooled_projection_dim = model_args.dit_pooled_projection_dim();
-    auto joint_attention_dim = model_args.dit_joint_attention_dim();
-    auto axes_dims_rope = model_args.dit_axes_dims_rope();
-    auto num_layers = model_args.dit_num_layers();
-    auto num_single_layers = model_args.dit_num_single_layers();
-    auto patch_size = model_args.dit_patch_size();
-    out_channels_ = model_args.dit_in_channels();
-    guidance_embeds_ = model_args.dit_guidance_embeds();
+    auto pooled_projection_dim = model_args.pooled_projection_dim();
+    auto joint_attention_dim = model_args.joint_attention_dim();
+    auto axes_dims_rope = model_args.axes_dims_rope();
+    auto num_layers = model_args.num_layers();
+    auto num_single_layers = model_args.num_single_layers();
+    auto patch_size = model_args.mm_patch_size();
+    out_channels_ = model_args.in_channels();
+    guidance_embeds_ = model_args.guidance_embeds();
 
     // Initialize the transformer model components here
     transformer_blocks_ =
@@ -1743,16 +1740,16 @@ TORCH_MODULE(FluxDiTModel);
 
 REGISTER_MODEL_ARGS(FluxTransformer2DModel, [&] {
   LOAD_ARG_OR(dtype, "dtype", "bfloat16");
-  LOAD_ARG_OR(dit_patch_size, "patch_size", 1);
-  LOAD_ARG_OR(dit_in_channels, "in_channels", 64);
-  LOAD_ARG_OR(dit_num_layers, "num_layers", 19);
-  LOAD_ARG_OR(dit_num_single_layers, "num_single_layers", 38);
-  LOAD_ARG_OR(dit_attention_head_dim, "attention_head_dim", 128);
-  LOAD_ARG_OR(dit_num_attention_heads, "num_attention_heads", 24);
-  LOAD_ARG_OR(dit_joint_attention_dim, "joint_attention_dim", 4096);
-  LOAD_ARG_OR(dit_pooled_projection_dim, "pooled_projection_dim", 768);
-  LOAD_ARG_OR(dit_guidance_embeds, "guidance_embeds", true);
+  LOAD_ARG_OR(mm_patch_size, "patch_size", 1);
+  LOAD_ARG_OR(in_channels, "in_channels", 64);
+  LOAD_ARG_OR(num_layers, "num_layers", 19);
+  LOAD_ARG_OR(num_single_layers, "num_single_layers", 38);
+  LOAD_ARG_OR(head_dim, "attention_head_dim", 128);
+  LOAD_ARG_OR(n_heads, "num_attention_heads", 24);
+  LOAD_ARG_OR(joint_attention_dim, "joint_attention_dim", 4096);
+  LOAD_ARG_OR(pooled_projection_dim, "pooled_projection_dim", 768);
+  LOAD_ARG_OR(guidance_embeds, "guidance_embeds", true);
   LOAD_ARG_OR(
-      dit_axes_dims_rope, "axes_dims_rope", (std::vector<int64_t>{16, 56, 56}));
+      axes_dims_rope, "axes_dims_rope", (std::vector<int64_t>{16, 56, 56}));
 });
 }  // namespace xllm

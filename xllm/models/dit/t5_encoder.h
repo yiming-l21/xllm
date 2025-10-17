@@ -28,8 +28,8 @@ class T5LayerNormImpl : public torch::nn::Module {
       : device_(context.get_tensor_options().device()),
         dtype_(context.get_tensor_options().dtype().toScalarType()) {
     ModelArgs model_args = context.get_model_args();
-    int64_t hidden_size = model_args.t5_d_model();
-    variance_epsilon = model_args.t5_layer_norm_epsilon();
+    int64_t hidden_size = model_args.d_model();
+    variance_epsilon = model_args.layer_norm_eps();
     weight = register_parameter(
         "weight", torch::ones({hidden_size}).to(device_).to(dtype_));
   }
@@ -84,19 +84,19 @@ class T5DenseActDenseImpl : public T5DenseInterface {
     auto model_args = context.get_model_args();
     auto options = context.get_tensor_options();
     wi_ = register_module(
-        "wi", DiTLinear(model_args.t5_d_model(), model_args.t5_d_ff(), false));
+        "wi", DiTLinear(model_args.d_model(), model_args.d_ff(), false));
     wo_ = register_module(
-        "wo", DiTLinear(model_args.t5_d_ff(), model_args.t5_d_model(), false));
+        "wo", DiTLinear(model_args.d_ff(), model_args.d_model(), false));
 
     wi_->weight.set_data(wi_->weight.to(options));
     wo_->weight.set_data(wo_->weight.to(options));
-    if (model_args.t5_dense_act_fn() == "relu") {
+    if (model_args.act_fn() == "relu") {
       act_ = register_module("act", torch::nn::Functional(torch::relu));
-    } else if (model_args.t5_dense_act_fn() == "gelu_new") {
+    } else if (model_args.act_fn() == "gelu_new") {
       act_ = register_module("act", torch::nn::Functional(gelu_new));
     } else {
       throw std::invalid_argument("Unsupported activation function: " +
-                                  model_args.t5_dense_act_fn());
+                                  model_args.act_fn());
     }
   }
 
@@ -141,24 +141,22 @@ class T5DenseGatedActDenseImpl : public T5DenseInterface {
     auto model_args = context.get_model_args();
     auto options = context.get_tensor_options();
     wi_0_ = register_module(
-        "wi_0",
-        DiTLinear(model_args.t5_d_model(), model_args.t5_d_ff(), false));
+        "wi_0", DiTLinear(model_args.d_model(), model_args.d_ff(), false));
     wi_1_ = register_module(
-        "wi_1",
-        DiTLinear(model_args.t5_d_model(), model_args.t5_d_ff(), false));
+        "wi_1", DiTLinear(model_args.d_model(), model_args.d_ff(), false));
     wo_ = register_module(
-        "wo", DiTLinear(model_args.t5_d_ff(), model_args.t5_d_model(), false));
+        "wo", DiTLinear(model_args.d_ff(), model_args.d_model(), false));
 
     wi_0_->weight.set_data(wi_0_->weight.to(options));
     wi_1_->weight.set_data(wi_1_->weight.to(options));
     wo_->weight.set_data(wo_->weight.to(options));
-    if (model_args.t5_dense_act_fn() == "relu") {
+    if (model_args.act_fn() == "relu") {
       act_ = register_module("act", torch::nn::Functional(torch::relu));
-    } else if (model_args.t5_dense_act_fn() == "gelu_new") {
+    } else if (model_args.act_fn() == "gelu_new") {
       act_ = register_module("act", torch::nn::Functional(gelu_new));
     } else {
       throw std::invalid_argument("Unsupported activation function: " +
-                                  model_args.t5_dense_act_fn());
+                                  model_args.act_fn());
     }
   }
 
@@ -211,7 +209,7 @@ class T5LayerFFNImpl : public torch::nn::Module {
     auto model_args = context.get_model_args();
     auto options = context.get_tensor_options();
     layer_norm_ = register_module("layer_norm", T5LayerNorm(context));
-    if (model_args.t5_is_gated_act()) {
+    if (model_args.is_gated_act()) {
       dense_relu_dense_ =
           register_module("DenseReluDense",
                           std::make_shared<T5DenseGatedActDenseImpl>(context));
@@ -308,15 +306,15 @@ class T5AttentionImpl : public torch::nn::Module {
     auto model_args = context.get_model_args();
     auto options = context.get_tensor_options();
     has_relative_attention_bias_ = has_relative_attention_bias;
-    inner_dim_ = model_args.t5_num_heads() * model_args.t5_d_kv();
+    inner_dim_ = model_args.n_heads() * model_args.d_kv();
 
-    n_heads_ = model_args.t5_num_heads();
-    key_value_proj_dim_ = model_args.t5_d_kv();
-    d_model_ = model_args.t5_d_model();
+    n_heads_ = model_args.n_heads();
+    key_value_proj_dim_ = model_args.d_kv();
+    d_model_ = model_args.d_model();
     relative_attention_num_buckets_ =
-        model_args.t5_relative_attention_num_buckets();
+        model_args.relative_attention_num_buckets();
     relative_attention_max_distance_ =
-        model_args.t5_relative_attention_max_distance();
+        model_args.relative_attention_max_distance();
 
     inner_dim_ = n_heads_ * key_value_proj_dim_;
     q_ = register_module("q", DiTLinear(d_model_, inner_dim_, false));
@@ -682,12 +680,11 @@ class T5EncoderModelImpl : public torch::nn::Module {
   T5EncoderModelImpl(const ModelContext& context) {
     auto model_args = context.get_model_args();
     auto options = context.get_tensor_options();
-    embed_tokens_ =
-        register_module("embed_tokens",
-                        torch::nn::Embedding(model_args.t5_vocab_size(),
-                                             model_args.t5_d_model()));
+    embed_tokens_ = register_module(
+        "embed_tokens",
+        torch::nn::Embedding(model_args.vocab_size(), model_args.d_model()));
     embed_tokens_->weight.set_data(embed_tokens_->weight.to(options));
-    for (int64_t i = 0; i < model_args.t5_num_layers(); ++i) {
+    for (int64_t i = 0; i < model_args.num_layers(); ++i) {
       bool has_relative_bias = (i == 0);
       blocks_.push_back(register_module("block_" + std::to_string(i),
                                         T5Block(context, has_relative_bias)));
@@ -767,19 +764,18 @@ TORCH_MODULE(T5EncoderModel);
 REGISTER_MODEL_ARGS(T5EncoderModel, [&] {
   LOAD_ARG_OR(dtype, "torch_dtype", "bfloat16");
   LOAD_ARG_OR(model_type, "model_type", "t5encoder");
-  LOAD_ARG_OR(t5_vocab_size, "vocab_size", 32128);
-  LOAD_ARG_OR(t5_d_model, "d_model", 4096);
-  LOAD_ARG_OR(t5_num_layers, "num_layers", 24);
-  LOAD_ARG_OR(t5_d_kv, "d_kv", 64);
-  LOAD_ARG_OR(t5_num_heads, "num_heads", 64);
-  LOAD_ARG_OR(t5_d_ff, "d_ff", 10240);
-  LOAD_ARG_OR(t5_dense_act_fn, "dense_act_fn", "gelu_new");
-  LOAD_ARG_OR(t5_is_gated_act, "is_gated_act", true);
+  LOAD_ARG_OR(vocab_size, "vocab_size", 32128);
+  LOAD_ARG_OR(d_model, "d_model", 4096);
+  LOAD_ARG_OR(num_layers, "num_layers", 24);
+  LOAD_ARG_OR(d_kv, "d_kv", 64);
+  LOAD_ARG_OR(n_heads, "num_heads", 64);
+  LOAD_ARG_OR(d_ff, "d_ff", 10240);
+  LOAD_ARG_OR(act_fn, "dense_act_fn", "gelu_new");
+  LOAD_ARG_OR(is_gated_act, "is_gated_act", true);
   LOAD_ARG_OR(
-      t5_relative_attention_num_buckets, "relative_attention_num_buckets", 32);
-  LOAD_ARG_OR(t5_relative_attention_max_distance,
-              "relative_attention_max_distance",
-              128);
-  LOAD_ARG_OR(t5_layer_norm_epsilon, "layer_norm_epsilon", 1e-6f);
+      relative_attention_num_buckets, "relative_attention_num_buckets", 32);
+  LOAD_ARG_OR(
+      relative_attention_max_distance, "relative_attention_max_distance", 128);
+  LOAD_ARG_OR(layer_norm_eps, "layer_norm_epsilon", 1e-6f);
 });
 }  // namespace xllm
