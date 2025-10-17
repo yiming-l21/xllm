@@ -91,21 +91,9 @@ class DiTRMSNormImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     if (elementwise_affine_) {
-      auto weight = state_dict.get_tensor("weight");
-      if (weight.defined()) {
-        DCHECK_EQ(weight_.sizes(), weight.sizes())
-            << "weight size mismatch: expected " << weight_.sizes()
-            << " but got " << weight.sizes();
-        weight_.data().copy_(weight.to(options_));
-      }
+      state_dict.copy_tensor_to("weight", weight_);
       if (is_bias_) {
-        auto bias = state_dict.get_tensor("bias");
-        if (bias.defined()) {
-          DCHECK_EQ(bias_.sizes(), bias.sizes())
-              << "bias size mismatch: expected " << bias_.sizes() << " but got "
-              << bias.sizes();
-          bias_.data().copy_(bias.to(options_));
-        }
+        state_dict.copy_tensor_to("bias", bias_);
       }
     }
   }
@@ -201,52 +189,14 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     // norm_k
     norm_k_->load_state_dict(state_dict.get_dict_with_prefix("norm_k."));
     // to_q
-    const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
-    if (to_q_state_weight.defined()) {
-      DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
-          << "to_q weight size mismatch: expected " << to_q_->weight.sizes()
-          << " but got " << to_q_state_weight.sizes();
-      to_q_->weight.data().copy_(to_q_state_weight.to(options_));
-    }
-
-    const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
-    if (to_q_state_bias.defined()) {
-      DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
-          << "to_q bias size mismatch: expected " << to_q_->bias.sizes()
-          << " but got " << to_q_state_bias.sizes();
-      to_q_->bias.data().copy_(to_q_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("to_q.weight", to_q_->weight);
+    state_dict.copy_tensor_to("to_q.bias", to_q_->bias);
     // to_k
-    const auto to_k_state_weight = state_dict.get_tensor("to_k.weight");
-    if (to_k_state_weight.defined()) {
-      DCHECK_EQ(to_k_->weight.sizes(), to_k_state_weight.sizes())
-          << "to_k weight size mismatch: expected " << to_k_->weight.sizes()
-          << " but got " << to_k_state_weight.sizes();
-      to_k_->weight.data().copy_(to_k_state_weight.to(options_));
-    }
-    const auto to_k_state_bias = state_dict.get_tensor("to_k.bias");
-    if (to_k_state_bias.defined()) {
-      DCHECK_EQ(to_k_->bias.sizes(), to_k_state_bias.sizes())
-          << "to_k bias size mismatch: expected " << to_k_->bias.sizes()
-          << " but got " << to_k_state_bias.sizes();
-      to_k_->bias.data().copy_(to_k_state_bias.to(options_));
-    }
-
+    state_dict.copy_tensor_to("to_k.weight", to_k_->weight);
+    state_dict.copy_tensor_to("to_k.bias", to_k_->bias);
     // to_v
-    const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
-    if (to_v_state_weight.defined()) {
-      DCHECK_EQ(to_v_->weight.sizes(), to_v_state_weight.sizes())
-          << "to_v weight size mismatch: expected " << to_v_->weight.sizes()
-          << " but got " << to_v_state_weight.sizes();
-      to_v_->weight.data().copy_(to_v_state_weight.to(options_));
-    }
-    const auto to_v_state_bias = state_dict.get_tensor("to_v.bias");
-    if (to_v_state_bias.defined()) {
-      DCHECK_EQ(to_v_->bias.sizes(), to_v_state_bias.sizes())
-          << "to_v bias size mismatch: expected " << to_v_->bias.sizes()
-          << " but got " << to_v_state_bias.sizes();
-      to_v_->bias.data().copy_(to_v_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("to_v.weight", to_v_->weight);
+    state_dict.copy_tensor_to("to_v.bias", to_v_->bias);
   }
 
  private:
@@ -429,83 +379,20 @@ class FluxAttentionImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     //  to_q
-    const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
-    if (to_q_state_weight.defined()) {
-      DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
-          << "to_q weight size mismatch: expected " << to_q_->weight.sizes()
-          << " but got " << to_q_state_weight.sizes();
-      to_q_->weight.data().copy_(to_q_state_weight.to(options_));
-    }
-    const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
-    if (to_q_state_bias.defined()) {
-      DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
-          << "to_q bias size mismatch: expected " << to_q_->bias.sizes()
-          << " but got " << to_q_state_bias.sizes();
-      to_q_->bias.data().copy_(to_q_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("to_q.weight", to_q_->weight);
+    state_dict.copy_tensor_to("to_q.bias", to_q_->bias);
     // to_k
-    const auto to_k_state_weight = state_dict.get_tensor("to_k.weight");
-    if (to_k_state_weight.defined()) {
-      DCHECK_EQ(to_k_->weight.sizes(), to_k_state_weight.sizes())
-          << "to_k weight size mismatch: expected " << to_k_->weight.sizes()
-          << " but got " << to_k_state_weight.sizes();
-      to_k_->weight.data().copy_(to_k_state_weight.to(options_));
-    }
-    const auto to_k_state_bias = state_dict.get_tensor("to_k.bias");
-    if (to_k_state_bias.defined()) {
-      DCHECK_EQ(to_k_->bias.sizes(), to_k_state_bias.sizes())
-          << "to_k bias size mismatch: expected " << to_k_->bias.sizes()
-          << " but got " << to_k_state_bias.sizes();
-      to_k_->bias.data().copy_(to_k_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("to_k.weight", to_k_->weight);
+    state_dict.copy_tensor_to("to_k.bias", to_k_->bias);
     // to_v
-    const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
-    if (to_v_state_weight.defined()) {
-      DCHECK_EQ(to_v_->weight.sizes(), to_v_state_weight.sizes())
-          << "to_v weight size mismatch: expected " << to_v_->weight.sizes()
-          << " but got " << to_v_state_weight.sizes();
-      to_v_->weight.data().copy_(to_v_state_weight.to(options_));
-    }
-    const auto to_v_state_bias = state_dict.get_tensor("to_v.bias");
-    if (to_v_state_bias.defined()) {
-      DCHECK_EQ(to_v_->bias.sizes(), to_v_state_bias.sizes())
-          << "to_v bias size mismatch: expected " << to_v_->bias.sizes()
-          << " but got " << to_v_state_bias.sizes();
-      to_v_->bias.data().copy_(to_v_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("to_v.weight", to_v_->weight);
+    state_dict.copy_tensor_to("to_v.bias", to_v_->bias);
     // to_out
-    const auto to_out_state_weight = state_dict.get_tensor("to_out.0.weight");
-    if (to_out_state_weight.defined()) {
-      DCHECK_EQ(to_out_->weight.sizes(), to_out_state_weight.sizes())
-          << "to_out weight size mismatch: expected " << to_out_->weight.sizes()
-          << " but got " << to_out_state_weight.sizes();
-      to_out_->weight.data().copy_(to_out_state_weight.to(options_));
-    }
-    const auto to_out_state_bias = state_dict.get_tensor("to_out.0.bias");
-    if (to_out_state_bias.defined()) {
-      DCHECK_EQ(to_out_->bias.sizes(), to_out_state_bias.sizes())
-          << "to_out bias size mismatch: expected " << to_out_->bias.sizes()
-          << " but got " << to_out_state_bias.sizes();
-      to_out_->bias.data().copy_(to_out_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("to_out.0.weight", to_out_->weight);
+    state_dict.copy_tensor_to("to_out.0.bias", to_out_->bias);
     // to_add_out
-    const auto to_add_out_state_weight =
-        state_dict.get_tensor("to_add_out.weight");
-    if (to_add_out_state_weight.defined()) {
-      DCHECK_EQ(to_add_out_->weight.sizes(), to_add_out_state_weight.sizes())
-          << "to_add_out weight size mismatch: expected "
-          << to_add_out_->weight.sizes() << " but got "
-          << to_add_out_state_weight.sizes();
-      to_add_out_->weight.data().copy_(to_add_out_state_weight.to(options_));
-    }
-    const auto to_add_out_state_bias = state_dict.get_tensor("to_add_out.bias");
-    if (to_add_out_state_bias.defined()) {
-      DCHECK_EQ(to_add_out_->bias.sizes(), to_add_out_state_bias.sizes())
-          << "to_add_out bias size mismatch: expected "
-          << to_add_out_->bias.sizes() << " but got "
-          << to_add_out_state_bias.sizes();
-      to_add_out_->bias.data().copy_(to_add_out_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("to_add_out.weight", to_add_out_->weight);
+    state_dict.copy_tensor_to("to_add_out.bias", to_add_out_->bias);
     // norm_q
     norm_q_->load_state_dict(state_dict.get_dict_with_prefix("norm_q."));
     // norm_k
@@ -517,59 +404,14 @@ class FluxAttentionImpl : public torch::nn::Module {
     norm_added_k_->load_state_dict(
         state_dict.get_dict_with_prefix("norm_added_k."));
     // add_q_proj
-    const auto add_q_proj_state_weight =
-        state_dict.get_tensor("add_q_proj.weight");
-    if (add_q_proj_state_weight.defined()) {
-      DCHECK_EQ(add_q_proj_->weight.sizes(), add_q_proj_state_weight.sizes())
-          << "add_q_proj weight size mismatch: expected "
-          << add_q_proj_->weight.sizes() << " but got "
-          << add_q_proj_state_weight.sizes();
-      add_q_proj_->weight.data().copy_(add_q_proj_state_weight.to(options_));
-    }
-    const auto add_q_proj_state_bias = state_dict.get_tensor("add_q_proj.bias");
-    if (add_q_proj_state_bias.defined()) {
-      DCHECK_EQ(add_q_proj_->bias.sizes(), add_q_proj_state_bias.sizes())
-          << "add_q_proj bias size mismatch: expected "
-          << add_q_proj_->bias.sizes() << " but got "
-          << add_q_proj_state_bias.sizes();
-      add_q_proj_->bias.data().copy_(add_q_proj_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("add_q_proj.weight", add_q_proj_->weight);
+    state_dict.copy_tensor_to("add_q_proj.bias", add_q_proj_->bias);
     // add_k_proj
-    const auto add_k_proj_state_weight =
-        state_dict.get_tensor("add_k_proj.weight");
-    if (add_k_proj_state_weight.defined()) {
-      DCHECK_EQ(add_k_proj_->weight.sizes(), add_k_proj_state_weight.sizes())
-          << "add_k_proj weight size mismatch: expected "
-          << add_k_proj_->weight.sizes() << " but got "
-          << add_k_proj_state_weight.sizes();
-      add_k_proj_->weight.data().copy_(add_k_proj_state_weight.to(options_));
-    }
-    const auto add_k_proj_state_bias = state_dict.get_tensor("add_k_proj.bias");
-    if (add_k_proj_state_bias.defined()) {
-      DCHECK_EQ(add_k_proj_->bias.sizes(), add_k_proj_state_bias.sizes())
-          << "add_k_proj bias size mismatch: expected "
-          << add_k_proj_->bias.sizes() << " but got "
-          << add_k_proj_state_bias.sizes();
-      add_k_proj_->bias.data().copy_(add_k_proj_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("add_k_proj.weight", add_k_proj_->weight);
+    state_dict.copy_tensor_to("add_k_proj.bias", add_k_proj_->bias);
     // add_v_proj
-    const auto add_v_proj_state_weight =
-        state_dict.get_tensor("add_v_proj.weight");
-    if (add_v_proj_state_weight.defined()) {
-      DCHECK_EQ(add_v_proj_->weight.sizes(), add_v_proj_state_weight.sizes())
-          << "add_v_proj weight size mismatch: expected "
-          << add_v_proj_->weight.sizes() << " but got "
-          << add_v_proj_state_weight.sizes();
-      add_v_proj_->weight.data().copy_(add_v_proj_state_weight.to(options_));
-    }
-    const auto add_v_proj_state_bias = state_dict.get_tensor("add_v_proj.bias");
-    if (add_v_proj_state_bias.defined()) {
-      DCHECK_EQ(add_v_proj_->bias.sizes(), add_v_proj_state_bias.sizes())
-          << "add_v_proj bias size mismatch: expected "
-          << add_v_proj_->bias.sizes() << " but got "
-          << add_v_proj_state_bias.sizes();
-      add_v_proj_->bias.data().copy_(add_v_proj_state_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("add_v_proj.weight", add_v_proj_->weight);
+    state_dict.copy_tensor_to("add_v_proj.bias", add_v_proj_->bias);
   }
 
  private:
@@ -622,31 +464,11 @@ class PixArtAlphaTextProjectionImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     // linear_1
-    const auto linear1_weight = state_dict.get_tensor("linear_1.weight");
-    if (linear1_weight.defined()) {
-      DCHECK_EQ(linear1_weight.sizes(), linear_1_->weight.sizes())
-          << "linear_1 weight size mismatch";
-      linear_1_->weight.data().copy_(linear1_weight.to(options_));
-    }
-    const auto linear1_bias = state_dict.get_tensor("linear_1.bias");
-    if (linear1_bias.defined()) {
-      DCHECK_EQ(linear1_bias.sizes(), linear_1_->bias.sizes())
-          << "linear_1 bias size mismatch";
-      linear_1_->bias.data().copy_(linear1_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("linear_1.weight", linear_1_->weight);
+    state_dict.copy_tensor_to("linear_1.bias", linear_1_->bias);
     // linear_2
-    const auto linear2_weight = state_dict.get_tensor("linear_2.weight");
-    if (linear2_weight.defined()) {
-      DCHECK_EQ(linear2_weight.sizes(), linear_2_->weight.sizes())
-          << "linear_2 weight size mismatch";
-      linear_2_->weight.data().copy_(linear2_weight.to(options_));
-    }
-    const auto linear2_bias = state_dict.get_tensor("linear_2.bias");
-    if (linear2_bias.defined()) {
-      DCHECK_EQ(linear2_bias.sizes(), linear_2_->bias.sizes())
-          << "linear_2 bias size mismatch";
-      linear_2_->bias.data().copy_(linear2_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("linear_2.weight", linear_2_->weight);
+    state_dict.copy_tensor_to("linear_2.bias", linear_2_->bias);
   }
 
  private:
@@ -761,32 +583,11 @@ class TimestepEmbeddingImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     // linear1
-    auto linear1_weight = state_dict.get_tensor("linear_1.weight");
-    if (linear1_weight.defined()) {
-      DCHECK_EQ(linear1_weight.sizes(), linear_1_->weight.sizes())
-          << "linear_1 weight size mismatch";
-      linear_1_->weight.data().copy_(linear1_weight.to(options_));
-    }
-    const auto linear1_bias = state_dict.get_tensor("linear_1.bias");
-    if (linear1_bias.defined()) {
-      DCHECK_EQ(linear1_bias.sizes(), linear_1_->bias.sizes())
-          << "linear_1 bias size mismatch";
-      linear_1_->bias.data().copy_(linear1_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("linear_1.weight", linear_1_->weight);
+    state_dict.copy_tensor_to("linear_1.bias", linear_1_->bias);
     // linear2
-    const auto linear2_weight = state_dict.get_tensor("linear_2.weight");
-    if (linear2_weight.defined()) {
-      DCHECK_EQ(linear2_weight.sizes(), linear_2_->weight.sizes())
-          << "linear_2 weight size mismatch";
-      linear_2_->weight.data().copy_(linear2_weight.to(options_));
-    }
-
-    const auto linear2_bias = state_dict.get_tensor("linear_2.bias");
-    if (linear2_bias.defined()) {
-      DCHECK_EQ(linear2_bias.sizes(), linear_2_->bias.sizes())
-          << "linear_2 bias size mismatch";
-      linear_2_->bias.data().copy_(linear2_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("linear_2.weight", linear_2_->weight);
+    state_dict.copy_tensor_to("linear_2.bias", linear_2_->bias);
   }
 
  private:
@@ -1029,18 +830,8 @@ class AdaLayerNormZeroImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     //  linear
-    const auto linear_weight = state_dict.get_tensor("linear.weight");
-    if (linear_weight.defined()) {
-      DCHECK_EQ(linear_weight.sizes(), linear_->weight.sizes())
-          << "linear weight size mismatch";
-      linear_->weight.data().copy_(linear_weight.to(options_));
-    }
-    const auto linear_bias = state_dict.get_tensor("linear.bias");
-    if (linear_bias.defined()) {
-      DCHECK_EQ(linear_bias.sizes(), linear_->bias.sizes())
-          << "linear bias size mismatch";
-      linear_->bias.data().copy_(linear_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("linear.weight", linear_->weight);
+    state_dict.copy_tensor_to("linear.bias", linear_->bias);
   }
 
  private:
@@ -1086,18 +877,8 @@ class AdaLayerNormZeroSingleImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     //  linear
-    const auto linear_weight = state_dict.get_tensor("linear.weight");
-    if (linear_weight.defined()) {
-      DCHECK_EQ(linear_weight.sizes(), linear_->weight.sizes())
-          << "linear weight size mismatch";
-      linear_->weight.data().copy_(linear_weight.to(options_));
-    }
-    const auto linear_bias = state_dict.get_tensor("linear.bias");
-    if (linear_bias.defined()) {
-      DCHECK_EQ(linear_bias.sizes(), linear_->bias.sizes())
-          << "linear bias size mismatch";
-      linear_->bias.data().copy_(linear_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("linear.weight", linear_->weight);
+    state_dict.copy_tensor_to("linear.bias", linear_->bias);
   }
 
  private:
@@ -1147,18 +928,8 @@ class AdaLayerNormContinuousImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     //  linear
-    const auto linear_weight = state_dict.get_tensor("linear.weight");
-    if (linear_weight.defined()) {
-      DCHECK_EQ(linear_weight.sizes(), linear_->weight.sizes())
-          << "linear weight size mismatch";
-      linear_->weight.data().copy_(linear_weight.to(options_));
-    }
-    const auto linear_bias = state_dict.get_tensor("linear.bias");
-    if (linear_bias.defined()) {
-      DCHECK_EQ(linear_bias.sizes(), linear_->bias.sizes())
-          << "linear bias size mismatch";
-      linear_->bias.data().copy_(linear_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("linear.weight", linear_->weight);
+    state_dict.copy_tensor_to("linear.bias", linear_->bias);
   }
 
  private:
@@ -1210,31 +981,12 @@ class FeedForwardImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    const auto linear1_weight = state_dict.get_tensor("net.0.proj.weight");
-    if (linear1_weight.defined()) {
-      DCHECK_EQ(linear1_weight.sizes(), linear1_->weight.sizes())
-          << "linear1 weight size mismatch";
-      linear1_->weight.data().copy_(linear1_weight.to(options_));
-    }
-    const auto linear1_bias = state_dict.get_tensor("net.0.proj.bias");
-    if (linear1_bias.defined()) {
-      DCHECK_EQ(linear1_bias.sizes(), linear1_->bias.sizes())
-          << "linear1 bias size mismatch";
-      linear1_->bias.data().copy_(linear1_bias.to(options_));
-    }
+    // linear1
+    state_dict.copy_tensor_to("net.0.proj.weight", linear1_->weight);
+    state_dict.copy_tensor_to("net.0.proj.bias", linear1_->bias);
     // linear2
-    const auto linear2_weight = state_dict.get_tensor("net.2.weight");
-    if (linear2_weight.defined()) {
-      DCHECK_EQ(linear2_weight.sizes(), linear2_->weight.sizes())
-          << "linear2 weight size mismatch";
-      linear2_->weight.data().copy_(linear2_weight.to(options_));
-    }
-    const auto linear2_bias = state_dict.get_tensor("net.2.bias");
-    if (linear2_bias.defined()) {
-      DCHECK_EQ(linear2_bias.sizes(), linear2_->bias.sizes())
-          << "linear2 bias size mismatch";
-      linear2_->bias.data().copy_(linear2_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("net.2.weight", linear2_->weight);
+    state_dict.copy_tensor_to("net.2.bias", linear2_->bias);
   }
 
  private:
@@ -1301,31 +1053,11 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
     // norm
     norm_->load_state_dict(state_dict.get_dict_with_prefix("norm."));
     // proj_mlp
-    const auto proj_mlp_weight = state_dict.get_tensor("proj_mlp.weight");
-    if (proj_mlp_weight.defined()) {
-      DCHECK_EQ(proj_mlp_weight.sizes(), proj_mlp_->weight.sizes())
-          << "proj mlp weight size mismatch";
-      proj_mlp_->weight.data().copy_(proj_mlp_weight.to(options_));
-    }
-    const auto proj_mlp_bias = state_dict.get_tensor("proj_mlp.bias");
-    if (proj_mlp_bias.defined()) {
-      DCHECK_EQ(proj_mlp_bias.sizes(), proj_mlp_->bias.sizes())
-          << "proj mlp bias size mismatch";
-      proj_mlp_->bias.data().copy_(proj_mlp_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("proj_mlp.weight", proj_mlp_->weight);
+    state_dict.copy_tensor_to("proj_mlp.bias", proj_mlp_->bias);
     // proj_out
-    const auto proj_out_weight = state_dict.get_tensor("proj_out.weight");
-    if (proj_out_weight.defined()) {
-      DCHECK_EQ(proj_out_weight.sizes(), proj_out_->weight.sizes())
-          << "proj out weight size mismatch";
-      proj_out_->weight.data().copy_(proj_out_weight.to(options_));
-    }
-    const auto proj_out_bias = state_dict.get_tensor("proj_out.bias");
-    if (proj_out_bias.defined()) {
-      DCHECK_EQ(proj_out_bias.sizes(), proj_out_->bias.sizes())
-          << "proj out bias size mismatch";
-      proj_out_->bias.data().copy_(proj_out_bias.to(options_));
-    }
+    state_dict.copy_tensor_to("proj_out.weight", proj_out_->weight);
+    state_dict.copy_tensor_to("proj_out.bias", proj_out_->bias);
   }
 
  private:
@@ -1616,31 +1348,13 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
     // Load model parameters from the loader
     for (const auto& state_dict : loader->get_state_dicts()) {
       // context_embedder
-      const auto weight = state_dict->get_tensor("context_embedder.weight");
-      if (weight.defined()) {
-        DCHECK_EQ(weight.sizes(), context_embedder_->weight.sizes())
-            << "context_embedder weight size mismatch";
-        context_embedder_->weight.data().copy_(weight.to(options_));
-      }
-      const auto bias = state_dict->get_tensor("context_embedder.bias");
-      if (bias.defined()) {
-        DCHECK_EQ(bias.sizes(), context_embedder_->bias.sizes())
-            << "context_embedder bias size mismatch";
-        context_embedder_->bias.data().copy_(bias.to(options_));
-      }
+      state_dict->copy_tensor_to("context_embedder.weight",
+                                 context_embedder_->weight);
+      state_dict->copy_tensor_to("context_embedder.bias",
+                                 context_embedder_->bias);
       // x_embedder
-      const auto x_weight = state_dict->get_tensor("x_embedder.weight");
-      if (x_weight.defined()) {
-        DCHECK_EQ(x_weight.sizes(), x_embedder_->weight.sizes())
-            << "x_embedder weight size mismatch";
-        x_embedder_->weight.data().copy_(x_weight.to(options_));
-      }
-      const auto x_bias = state_dict->get_tensor("x_embedder.bias");
-      if (x_bias.defined()) {
-        DCHECK_EQ(x_bias.sizes(), x_embedder_->bias.sizes())
-            << "x_embedder bias size mismatch";
-        x_embedder_->bias.data().copy_(x_bias.to(options_));
-      }
+      state_dict->copy_tensor_to("x_embedder.weight", x_embedder_->weight);
+      state_dict->copy_tensor_to("x_embedder.bias", x_embedder_->bias);
       // time_text_embed
       if (time_text_embed_) {
         time_text_embed_->load_state_dict(
@@ -1665,18 +1379,8 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
       // norm_out
       norm_out_->load_state_dict(state_dict->get_dict_with_prefix("norm_out."));
       // proj_out
-      const auto proj_out_weight = state_dict->get_tensor("proj_out.weight");
-      if (proj_out_weight.defined()) {
-        DCHECK_EQ(proj_out_weight.sizes(), proj_out_->weight.sizes())
-            << "proj_out weight size mismatch";
-        proj_out_->weight.data().copy_(proj_out_weight.to(options_));
-      }
-      const auto proj_out_bias = state_dict->get_tensor("proj_out.bias");
-      if (proj_out_bias.defined()) {
-        DCHECK_EQ(proj_out_bias.sizes(), proj_out_->bias.sizes())
-            << "proj_out bias size mismatch";
-        proj_out_->bias.data().copy_(proj_out_bias.to(options_));
-      }
+      state_dict->copy_tensor_to("proj_out.weight", proj_out_->weight);
+      state_dict->copy_tensor_to("proj_out.bias", proj_out_->bias);
     }
   }
 

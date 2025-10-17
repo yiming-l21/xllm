@@ -34,6 +34,10 @@ class StateDict {
   // get the tensor with the given name. return nullptr if not found.
   virtual torch::Tensor get_tensor(const std::string& tensor_name) const;
 
+  // copy the tensor with the given name to the given model weights.
+  virtual bool copy_tensor_to(const std::string& tensor_name,
+                              torch::Tensor& model_weights) const;
+
   // get the sharded tensor with the given name for the given rank.
   virtual torch::Tensor get_sharded_tensor(const std::string& tensor_name,
                                            int64_t dim,

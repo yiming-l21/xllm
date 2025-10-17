@@ -23,16 +23,6 @@
 //  https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/autoencoders/autoencoder_kl.py
 
 namespace xllm {
-inline void copy_param_from_state_dict(const StateDict& state_dict,
-                                       const std::string& param_key,
-                                       torch::Tensor& target_param) {
-  const auto src_tensor = state_dict.get_tensor(param_key);
-  if (!src_tensor.defined()) {
-    return;
-  }
-  target_param.data().copy_(src_tensor);
-}
-
 class VAEImageProcessorImpl : public torch::nn::Module {
  public:
   VAEImageProcessorImpl(ModelContext context) {
@@ -261,22 +251,20 @@ class AttentionImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     // to_q_
-    copy_param_from_state_dict(state_dict, "to_q.bias", to_q_->bias);
-    copy_param_from_state_dict(state_dict, "to_q.weight", to_q_->weight);
+    state_dict.copy_tensor_to("to_q.weight", to_q_->weight);
+    state_dict.copy_tensor_to("to_q.bias", to_q_->bias);
     // to_k_
-    copy_param_from_state_dict(state_dict, "to_k.bias", to_k_->bias);
-    copy_param_from_state_dict(state_dict, "to_k.weight", to_k_->weight);
+    state_dict.copy_tensor_to("to_k.weight", to_k_->weight);
+    state_dict.copy_tensor_to("to_k.bias", to_k_->bias);
     // to_v_
-    copy_param_from_state_dict(state_dict, "to_v.bias", to_v_->bias);
-    copy_param_from_state_dict(state_dict, "to_v.weight", to_v_->weight);
+    state_dict.copy_tensor_to("to_v.weight", to_v_->weight);
+    state_dict.copy_tensor_to("to_v.bias", to_v_->bias);
     // to_out_
-    copy_param_from_state_dict(state_dict, "to_out.0.bias", to_out_->bias);
-    copy_param_from_state_dict(state_dict, "to_out.0.weight", to_out_->weight);
+    state_dict.copy_tensor_to("to_out.0.weight", to_out_->weight);
+    state_dict.copy_tensor_to("to_out.0.bias", to_out_->bias);
     if (group_norm_) {
-      copy_param_from_state_dict(
-          state_dict, "group_norm.weight", group_norm_->weight);
-      copy_param_from_state_dict(
-          state_dict, "group_norm.bias", group_norm_->bias);
+      state_dict.copy_tensor_to("group_norm.weight", group_norm_->weight);
+      state_dict.copy_tensor_to("group_norm.bias", group_norm_->bias);
     }
   }
 
@@ -317,8 +305,8 @@ class Downsample2DImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    copy_param_from_state_dict(state_dict, "conv.bias", conv_->bias);
-    copy_param_from_state_dict(state_dict, "conv.weight", conv_->weight);
+    state_dict.copy_tensor_to("conv.weight", conv_->weight);
+    state_dict.copy_tensor_to("conv.bias", conv_->bias);
   }
 
  private:
@@ -359,8 +347,8 @@ class Upsample2DImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    copy_param_from_state_dict(state_dict, "conv.bias", conv_->bias);
-    copy_param_from_state_dict(state_dict, "conv.weight", conv_->weight);
+    state_dict.copy_tensor_to("conv.weight", conv_->weight);
+    state_dict.copy_tensor_to("conv.bias", conv_->bias);
   }
 
  private:
@@ -468,23 +456,21 @@ class ResnetBlock2DImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     // conv1_
-    copy_param_from_state_dict(state_dict, "conv1.weight", conv1_->weight);
-    copy_param_from_state_dict(state_dict, "conv1.bias", conv1_->bias);
+    state_dict.copy_tensor_to("conv1.weight", conv1_->weight);
+    state_dict.copy_tensor_to("conv1.bias", conv1_->bias);
     // norm1_
-    copy_param_from_state_dict(state_dict, "norm1.weight", norm1_->weight);
-    copy_param_from_state_dict(state_dict, "norm1.bias", norm1_->bias);
+    state_dict.copy_tensor_to("norm1.weight", norm1_->weight);
+    state_dict.copy_tensor_to("norm1.bias", norm1_->bias);
     // norm2_
-    copy_param_from_state_dict(state_dict, "norm2.weight", norm2_->weight);
-    copy_param_from_state_dict(state_dict, "norm2.bias", norm2_->bias);
+    state_dict.copy_tensor_to("norm2.weight", norm2_->weight);
+    state_dict.copy_tensor_to("norm2.bias", norm2_->bias);
     // conv2_
-    copy_param_from_state_dict(state_dict, "conv2.weight", conv2_->weight);
-    copy_param_from_state_dict(state_dict, "conv2.bias", conv2_->bias);
+    state_dict.copy_tensor_to("conv2.weight", conv2_->weight);
+    state_dict.copy_tensor_to("conv2.bias", conv2_->bias);
     if (conv_shortcut_) {
       // conv_shortcut_
-      copy_param_from_state_dict(
-          state_dict, "conv_shortcut.weight", conv_shortcut_->weight);
-      copy_param_from_state_dict(
-          state_dict, "conv_shortcut.bias", conv_shortcut_->bias);
+      state_dict.copy_tensor_to("conv_shortcut.weight", conv_shortcut_->weight);
+      state_dict.copy_tensor_to("conv_shortcut.bias", conv_shortcut_->bias);
     }
   }
 
@@ -756,17 +742,14 @@ class VAEEncoderImpl : public torch::nn::Module {
   void load_state_dict(const StateDict& state_dict) {
     LOG(INFO) << "Loading state_dict for VAEEecoder";
     // conv_in_
-    copy_param_from_state_dict(state_dict, "conv_in.weight", conv_in_->weight);
-    copy_param_from_state_dict(state_dict, "conv_in.bias", conv_in_->bias);
+    state_dict.copy_tensor_to("conv_in.weight", conv_in_->weight);
+    state_dict.copy_tensor_to("conv_in.bias", conv_in_->bias);
     // conv_norm_out_
-    copy_param_from_state_dict(
-        state_dict, "conv_norm_out.weight", conv_norm_out_->weight);
-    copy_param_from_state_dict(
-        state_dict, "conv_norm_out.bias", conv_norm_out_->bias);
+    state_dict.copy_tensor_to("conv_norm_out.weight", conv_norm_out_->weight);
+    state_dict.copy_tensor_to("conv_norm_out.bias", conv_norm_out_->bias);
     // conv_out_
-    copy_param_from_state_dict(
-        state_dict, "conv_out.weight", conv_out_->weight);
-    copy_param_from_state_dict(state_dict, "conv_out.bias", conv_out_->bias);
+    state_dict.copy_tensor_to("conv_out.weight", conv_out_->weight);
+    state_dict.copy_tensor_to("conv_out.bias", conv_out_->bias);
     for (size_t i = 0; i < down_blocks_->size(); ++i) {
       down_blocks_[i]->as<DownEncoderBlock2D>()->load_state_dict(
           state_dict.get_dict_with_prefix("down_blocks." + std::to_string(i) +
@@ -851,8 +834,8 @@ class VAEDecoderImpl : public torch::nn::Module {
   void load_state_dict(const StateDict& state_dict) {
     LOG(INFO) << "Loading state_dict for VAEDecoder";
     // conv_in_
-    copy_param_from_state_dict(state_dict, "conv_in.weight", conv_in_->weight);
-    copy_param_from_state_dict(state_dict, "conv_in.bias", conv_in_->bias);
+    state_dict.copy_tensor_to("conv_in.weight", conv_in_->weight);
+    state_dict.copy_tensor_to("conv_in.bias", conv_in_->bias);
     // mid_block_
     //  mid_block_ is a UNetMidBlock2D, so we load its state
     mid_block_->load_state_dict(state_dict.get_dict_with_prefix("mid_block."));
@@ -862,14 +845,11 @@ class VAEDecoderImpl : public torch::nn::Module {
                                           "."));
     }
     // conv_norm_out_
-    copy_param_from_state_dict(
-        state_dict, "conv_norm_out.weight", conv_norm_out_->weight);
-    copy_param_from_state_dict(
-        state_dict, "conv_norm_out.bias", conv_norm_out_->bias);
+    state_dict.copy_tensor_to("conv_norm_out.weight", conv_norm_out_->weight);
+    state_dict.copy_tensor_to("conv_norm_out.bias", conv_norm_out_->bias);
     // conv_out_
-    copy_param_from_state_dict(
-        state_dict, "conv_out.weight", conv_out_->weight);
-    copy_param_from_state_dict(state_dict, "conv_out.bias", conv_out_->bias);
+    state_dict.copy_tensor_to("conv_out.weight", conv_out_->weight);
+    state_dict.copy_tensor_to("conv_out.bias", conv_out_->bias);
   }
 
  private:
@@ -936,16 +916,14 @@ class VAEImpl : public torch::nn::Module {
       encoder_->load_state_dict(state_dict->get_dict_with_prefix("encoder."));
       decoder_->load_state_dict(state_dict->get_dict_with_prefix("decoder."));
       if (args_.use_quant_conv()) {
-        copy_param_from_state_dict(
-            *state_dict, "quant_conv.weight", quant_conv_->weight);
-        copy_param_from_state_dict(
-            *state_dict, "quant_conv.bias", quant_conv_->bias);
+        state_dict->copy_tensor_to("quant_conv.weight", quant_conv_->weight);
+        state_dict->copy_tensor_to("quant_conv.bias", quant_conv_->bias);
       }
       if (args_.use_post_quant_conv()) {
-        copy_param_from_state_dict(
-            *state_dict, "post_quant_conv.weight", post_quant_conv_->weight);
-        copy_param_from_state_dict(
-            *state_dict, "post_quant_conv.bias", post_quant_conv_->bias);
+        state_dict->copy_tensor_to("post_quant_conv.weight",
+                                   post_quant_conv_->weight);
+        state_dict->copy_tensor_to("post_quant_conv.bias",
+                                   post_quant_conv_->bias);
       }
     }
     LOG(INFO) << "VAE model loaded successfully.";

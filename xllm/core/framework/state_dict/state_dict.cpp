@@ -98,6 +98,19 @@ torch::Tensor StateDict::get_tensor(const std::string& tensor_name) const {
   return transform_func_ ? transform_func_(tensor_name, tensor) : tensor;
 }
 
+bool StateDict::copy_tensor_to(const std::string& tensor_name,
+                               torch::Tensor& model_weights) const {
+  auto tensor = get_tensor(tensor_name);
+  if (tensor.defined()) {
+    DCHECK_EQ(tensor.sizes(), model_weights.sizes())
+        << "Tensor size mismatch for " << tensor_name << ": expected "
+        << model_weights.sizes() << " but got " << tensor.sizes();
+    model_weights.data().copy_(tensor);
+    return true;
+  }
+  return false;
+}
+
 torch::Tensor StateDict::get_sharded_tensor(const std::string& tensor_name,
                                             int64_t dim,
                                             int rank,

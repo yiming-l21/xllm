@@ -29,36 +29,28 @@ class T5LayerNormImpl : public torch::nn::Module {
         dtype_(context.get_tensor_options().dtype().toScalarType()) {
     ModelArgs model_args = context.get_model_args();
     int64_t hidden_size = model_args.d_model();
-    variance_epsilon = model_args.layer_norm_eps();
-    weight = register_parameter(
+    variance_epsilon_ = model_args.layer_norm_eps();
+    weight_ = register_parameter(
         "weight", torch::ones({hidden_size}).to(device_).to(dtype_));
   }
 
   torch::Tensor forward(torch::Tensor hidden_states) {
     auto variance = hidden_states.to(dtype_).pow(2).mean(-1, true);
-    hidden_states = hidden_states * torch::rsqrt(variance + variance_epsilon);
-    if (weight.dtype() == torch::kFloat16 ||
-        weight.dtype() == torch::kBFloat16) {
-      hidden_states = hidden_states.to(weight.dtype());
+    hidden_states = hidden_states * torch::rsqrt(variance + variance_epsilon_);
+    if (weight_.dtype() == torch::kFloat16 ||
+        weight_.dtype() == torch::kBFloat16) {
+      hidden_states = hidden_states.to(weight_.dtype());
     }
-    return weight * hidden_states;
+    return weight_ * hidden_states;
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    auto weight_tensor = state_dict.get_tensor("weight");
-    if (weight_tensor.defined()) {
-      DCHECK_EQ(weight.sizes(), weight_tensor.sizes())
-          << "weight size mismatch: expected " << weight.sizes() << " but got "
-          << weight_tensor.sizes();
-      weight.data().copy_(weight_tensor);
-    }
+    bool falg = state_dict.copy_tensor_to("weight", weight_);
   }
 
- public:
-  torch::Tensor weight;
-  double variance_epsilon;
-
  private:
+  torch::Tensor weight_;
+  double variance_epsilon_;
   torch::Device device_;
   torch::ScalarType dtype_;
 };
@@ -102,20 +94,9 @@ class T5DenseActDenseImpl : public T5DenseInterface {
 
   void load_state_dict(const StateDict& state_dict) {
     // wi
-    const auto wi_weight = state_dict.get_tensor("wi.weight");
-    if (wi_weight.defined()) {
-      DCHECK_EQ(wi_weight.sizes(), wi_->weight.sizes())
-          << "wi weight size mismatch";
-      wi_->weight.data().copy_(wi_weight);
-    }
-
+    state_dict.copy_tensor_to("wi.weight", wi_->weight);
     // wo
-    const auto wo_weight = state_dict.get_tensor("wo.weight");
-    if (wo_weight.defined()) {
-      DCHECK_EQ(wo_weight.sizes(), wo_->weight.sizes())
-          << "wo weight size mismatch";
-      wo_->weight.data().copy_(wo_weight);
-    }
+    state_dict.copy_tensor_to("wo.weight", wo_->weight);
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states) {
@@ -162,26 +143,11 @@ class T5DenseGatedActDenseImpl : public T5DenseInterface {
 
   void load_state_dict(const StateDict& state_dict) {
     // wi_0
-    const auto wi_0_weight = state_dict.get_tensor("wi_0.weight");
-    if (wi_0_weight.defined()) {
-      DCHECK_EQ(wi_0_weight.sizes(), wi_0_->weight.sizes())
-          << "wi_0 weight size mismatch";
-      wi_0_->weight.data().copy_(wi_0_weight);
-    }
+    state_dict.copy_tensor_to("wi_0.weight", wi_0_->weight);
     // wi_1
-    const auto wi_1_weight = state_dict.get_tensor("wi_1.weight");
-    if (wi_1_weight.defined()) {
-      DCHECK_EQ(wi_1_weight.sizes(), wi_1_->weight.sizes())
-          << "wi_1 weight size mismatch";
-      wi_1_->weight.data().copy_(wi_1_weight);
-    }
+    state_dict.copy_tensor_to("wi_1.weight", wi_1_->weight);
     // wo
-    const auto wo_weight = state_dict.get_tensor("wo.weight");
-    if (wo_weight.defined()) {
-      DCHECK_EQ(wo_weight.sizes(), wo_->weight.sizes())
-          << "wo weight size mismatch";
-      wo_->weight.data().copy_(wo_weight);
-    }
+    state_dict.copy_tensor_to("wo.weight", wo_->weight);
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states) {
@@ -435,44 +401,13 @@ class T5AttentionImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    auto q_weight = state_dict.get_tensor("q.weight");
-    if (q_weight.defined()) {
-      DCHECK_EQ(q_->weight.sizes(), q_weight.sizes())
-          << "q weight size mismatch: expected " << q_->weight.sizes()
-          << " but got " << q_weight.sizes();
-      q_->weight.data().copy_(q_weight);
-    }
-    auto k_weight = state_dict.get_tensor("k.weight");
-    if (k_weight.defined()) {
-      DCHECK_EQ(k_->weight.sizes(), k_weight.sizes())
-          << "k weight size mismatch: expected " << k_->weight.sizes()
-          << " but got " << k_weight.sizes();
-      k_->weight.data().copy_(k_weight);
-    }
-    auto v_weight = state_dict.get_tensor("v.weight");
-    if (v_weight.defined()) {
-      DCHECK_EQ(v_->weight.sizes(), v_weight.sizes())
-          << "v weight size mismatch: expected " << v_->weight.sizes()
-          << " but got " << v_weight.sizes();
-      v_->weight.data().copy_(v_weight);
-    }
-    auto o_weight = state_dict.get_tensor("o.weight");
-    if (o_weight.defined()) {
-      DCHECK_EQ(o_->weight.sizes(), o_weight.sizes())
-          << "o weight size mismatch: expected " << o_->weight.sizes()
-          << " but got " << o_weight.sizes();
-      o_->weight.data().copy_(o_weight);
-    }
-    auto relative_attention_bias_weight_ =
-        state_dict.get_tensor("relative_attention_bias.weight");
-    if (relative_attention_bias_weight_.defined()) {
-      DCHECK_EQ(relative_attention_bias_->weight.sizes(),
-                relative_attention_bias_weight_.sizes())
-          << "relative_attention_bias weight size mismatch: expected "
-          << relative_attention_bias_->weight.sizes() << " but got "
-          << relative_attention_bias_weight_.sizes();
-      relative_attention_bias_->weight.data().copy_(
-          relative_attention_bias_weight_);
+    state_dict.copy_tensor_to("q.weight", q_->weight);
+    state_dict.copy_tensor_to("k.weight", k_->weight);
+    state_dict.copy_tensor_to("v.weight", v_->weight);
+    state_dict.copy_tensor_to("o.weight", o_->weight);
+    if (has_relative_attention_bias_) {
+      state_dict.copy_tensor_to("relative_attention_bias.weight",
+                                relative_attention_bias_->weight);
     }
   }
 
@@ -727,24 +662,9 @@ class T5EncoderModelImpl : public torch::nn::Module {
 
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     for (const auto& state_dict : loader->get_state_dicts()) {
-      const auto embedding_weight = state_dict->get_tensor("shared.weight");
-      if (embedding_weight.defined()) {
-        DCHECK_EQ(embedding_weight.sizes(), embed_tokens_->weight.sizes())
-            << "Embedding weight size mismatch: expected "
-            << embed_tokens_->weight.sizes() << ", got "
-            << embedding_weight.sizes();
-        embed_tokens_->weight.data().copy_(embedding_weight);
-      }
-      const auto final_layer_norm_weight =
-          state_dict->get_tensor("encoder.final_layer_norm.weight");
-      if (final_layer_norm_weight.defined()) {
-        DCHECK_EQ(final_layer_norm_weight.sizes(),
-                  final_layer_norm_->weight.sizes())
-            << "Final layer norm weight size mismatch: expected "
-            << final_layer_norm_->weight.sizes() << ", got "
-            << final_layer_norm_weight.sizes();
-        final_layer_norm_->weight.data().copy_(final_layer_norm_weight);
-      }
+      state_dict->copy_tensor_to("shared.weight", embed_tokens_->weight);
+      final_layer_norm_->load_state_dict(
+          state_dict->get_dict_with_prefix("encoder.final_layer_norm."));
       for (int64_t i = 0; i < blocks_.size(); ++i) {
         const auto block_prefix = "encoder.block." + std::to_string(i) + ".";
         blocks_[i]->load_state_dict(

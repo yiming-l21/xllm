@@ -171,21 +171,10 @@ class CLIPTextEmbeddingImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    auto tok_emb = state_dict.get_tensor("token_embedding.weight");
-    if (tok_emb.defined()) {
-      DCHECK_EQ(token_embedding_->weight.sizes(), tok_emb.sizes())
-          << "patch_embedding weight size mismatch for " << name();
-      token_embedding_->weight.data().copy_(tok_emb);
-      is_token_embedding_loaded = true;
-    }
-
-    auto pos = state_dict.get_tensor("position_embedding.weight");
-    if (pos.defined()) {
-      CHECK_EQ(pos.sizes(), position_embedding_.sizes())
-          << "position_embedding weight size mismatch for " << name();
-      position_embedding_.data().copy_(pos);
-      is_position_embedding_loaded = true;
-    }
+    is_token_embedding_loaded = state_dict.copy_tensor_to(
+        "token_embedding.weight", token_embedding_->weight);
+    is_position_embedding_loaded = state_dict.copy_tensor_to(
+        "position_embedding.weight", position_embedding_);
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
@@ -231,37 +220,10 @@ class CLIPMLPImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    const auto fc1_weight = state_dict.get_tensor("fc1.weight");
-    if (fc1_weight.defined()) {
-      DCHECK_EQ(fc1_weight.sizes(), fc1_->weight.sizes())
-          << "fc1 weight size mismatch";
-      fc1_->weight.data().copy_(fc1_weight);
-      fc1_weight_loaded_ = true;
-    }
-
-    const auto fc1_bias = state_dict.get_tensor("fc1.bias");
-    if (fc1_bias.defined()) {
-      DCHECK_EQ(fc1_bias.sizes(), fc1_->bias.sizes())
-          << "fc1 bias size mismatch";
-      fc1_->bias.data().copy_(fc1_bias);
-      fc1_bias_loaded_ = true;
-    }
-
-    const auto fc2_weight = state_dict.get_tensor("fc2.weight");
-    if (fc2_weight.defined()) {
-      DCHECK_EQ(fc2_weight.sizes(), fc2_->weight.sizes())
-          << "fc2 weight size mismatch";
-      fc2_->weight.data().copy_(fc2_weight);
-      fc2_weight_loaded_ = true;
-    }
-
-    const auto fc2_bias = state_dict.get_tensor("fc2.bias");
-    if (fc2_bias.defined()) {
-      DCHECK_EQ(fc2_bias.sizes(), fc2_->bias.sizes())
-          << "fc2 bias size mismatch";
-      fc2_->bias.data().copy_(fc2_bias);
-      fc2_bias_loaded_ = true;
-    }
+    fc1_weight_loaded_ = state_dict.copy_tensor_to("fc1.weight", fc1_->weight);
+    fc1_bias_loaded_ = state_dict.copy_tensor_to("fc1.bias", fc1_->bias);
+    fc2_weight_loaded_ = state_dict.copy_tensor_to("fc2.weight", fc2_->weight);
+    fc2_bias_loaded_ = state_dict.copy_tensor_to("fc2.bias", fc2_->bias);
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
@@ -364,69 +326,22 @@ class CLIPAttentionImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    const auto q_proj_weight = state_dict.get_tensor("q_proj.weight");
-    if (q_proj_weight.defined()) {
-      DCHECK_EQ(q_proj_weight.sizes(), q_proj_->weight.sizes())
-          << "q_proj weight size mismatch";
-      q_proj_->weight.data().copy_(q_proj_weight);
-      q_proj_weight_loaded_ = true;
-    }
-
-    const auto q_proj_bias = state_dict.get_tensor("q_proj.bias");
-    if (q_proj_bias.defined()) {
-      DCHECK_EQ(q_proj_bias.sizes(), q_proj_->bias.sizes())
-          << "q_proj bias size mismatch";
-      q_proj_->bias.data().copy_(q_proj_bias);
-      q_proj_bias_loaded_ = true;
-    }
-
-    const auto k_proj_weight = state_dict.get_tensor("k_proj.weight");
-    if (k_proj_weight.defined()) {
-      DCHECK_EQ(k_proj_weight.sizes(), k_proj_->weight.sizes())
-          << "k_proj weight size mismatch";
-      k_proj_->weight.data().copy_(k_proj_weight);
-      k_proj_weight_loaded_ = true;
-    }
-
-    const auto k_proj_bias = state_dict.get_tensor("k_proj.bias");
-    if (k_proj_bias.defined()) {
-      DCHECK_EQ(k_proj_bias.sizes(), k_proj_->bias.sizes())
-          << "k_proj bias size mismatch";
-      k_proj_->bias.data().copy_(k_proj_bias);
-      k_proj_bias_loaded_ = true;
-    }
-
-    const auto v_proj_weight = state_dict.get_tensor("v_proj.weight");
-    if (v_proj_weight.defined()) {
-      DCHECK_EQ(v_proj_weight.sizes(), v_proj_->weight.sizes())
-          << "v_proj weight size mismatch";
-      v_proj_->weight.data().copy_(v_proj_weight);
-      v_proj_weight_loaded_ = true;
-    }
-
-    const auto v_proj_bias = state_dict.get_tensor("v_proj.bias");
-    if (v_proj_bias.defined()) {
-      DCHECK_EQ(v_proj_bias.sizes(), v_proj_->bias.sizes())
-          << "v_proj bias size mismatch";
-      v_proj_->bias.data().copy_(v_proj_bias);
-      v_proj_bias_loaded_ = true;
-    }
-
-    const auto o_proj_weight = state_dict.get_tensor("out_proj.weight");
-    if (o_proj_weight.defined()) {
-      DCHECK_EQ(o_proj_weight.sizes(), o_proj_->weight.sizes())
-          << "o_proj weight size mismatch";
-      o_proj_->weight.data().copy_(o_proj_weight);
-      o_proj_weight_loaded_ = true;
-    }
-
-    const auto o_proj_bias = state_dict.get_tensor("out_proj.bias");
-    if (o_proj_bias.defined()) {
-      DCHECK_EQ(o_proj_bias.sizes(), o_proj_->bias.sizes())
-          << "o_proj bias size mismatch";
-      o_proj_->bias.data().copy_(o_proj_bias);
-      o_proj_bias_loaded_ = true;
-    }
+    q_proj_weight_loaded_ =
+        state_dict.copy_tensor_to("q_proj.weight", q_proj_->weight);
+    q_proj_bias_loaded_ =
+        state_dict.copy_tensor_to("q_proj.bias", q_proj_->bias);
+    k_proj_weight_loaded_ =
+        state_dict.copy_tensor_to("k_proj.weight", k_proj_->weight);
+    k_proj_bias_loaded_ =
+        state_dict.copy_tensor_to("k_proj.bias", k_proj_->bias);
+    v_proj_weight_loaded_ =
+        state_dict.copy_tensor_to("v_proj.weight", v_proj_->weight);
+    v_proj_bias_loaded_ =
+        state_dict.copy_tensor_to("v_proj.bias", v_proj_->bias);
+    o_proj_weight_loaded_ =
+        state_dict.copy_tensor_to("out_proj.weight", o_proj_->weight);
+    o_proj_bias_loaded_ =
+        state_dict.copy_tensor_to("out_proj.bias", o_proj_->bias);
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
@@ -518,40 +433,14 @@ class CLIPEncoderLayerImpl : public torch::nn::Module {
 
   void load_state_dict(const StateDict& state_dict) {
     self_attn_->load_state_dict(state_dict.get_dict_with_prefix("self_attn."));
-
-    const auto& layer_norm1_weight =
-        state_dict.get_tensor("layer_norm1.weight");
-    if (layer_norm1_weight.defined()) {
-      DCHECK_EQ(layer_norm1_weight.sizes(), layer_norm1_->weight.sizes())
-          << "layer_norm1 weight size mismatch";
-      layer_norm1_->weight.data().copy_(layer_norm1_weight);
-      layer_norm1_weight_loaded_ = true;
-    }
-
-    const auto layer_norm1_bias = state_dict.get_tensor("layer_norm1.bias");
-    if (layer_norm1_bias.defined()) {
-      DCHECK_EQ(layer_norm1_bias.sizes(), layer_norm1_->bias.sizes())
-          << "layer_norm1 bias size mismatch";
-      layer_norm1_->bias.data().copy_(layer_norm1_bias);
-      layer_norm1_bias_loaded_ = true;
-    }
-
-    const auto layer_norm2_weight = state_dict.get_tensor("layer_norm2.weight");
-    if (layer_norm2_weight.defined()) {
-      DCHECK_EQ(layer_norm2_weight.sizes(), layer_norm2_->weight.sizes())
-          << "layer_norm2 weight size mismatch";
-      layer_norm2_->weight.data().copy_(layer_norm2_weight);
-      layer_norm2_weight_loaded_ = true;
-    }
-
-    const auto layer_norm2_bias = state_dict.get_tensor("layer_norm2.bias");
-    if (layer_norm2_bias.defined()) {
-      DCHECK_EQ(layer_norm2_bias.sizes(), layer_norm2_->bias.sizes())
-          << "layer_norm2 bias size mismatch";
-      layer_norm2_->bias.data().copy_(layer_norm2_bias);
-      layer_norm2_bias_loaded_ = true;
-    }
-
+    layer_norm1_weight_loaded_ =
+        state_dict.copy_tensor_to("layer_norm1.weight", layer_norm1_->weight);
+    layer_norm1_bias_loaded_ =
+        state_dict.copy_tensor_to("layer_norm1.bias", layer_norm1_->bias);
+    layer_norm2_weight_loaded_ =
+        state_dict.copy_tensor_to("layer_norm2.weight", layer_norm2_->weight);
+    layer_norm2_bias_loaded_ =
+        state_dict.copy_tensor_to("layer_norm2.bias", layer_norm2_->bias);
     mlp_->load_state_dict(state_dict.get_dict_with_prefix("mlp."));
   }
 
@@ -683,25 +572,10 @@ class CLIPTextTransformerImpl : public torch::nn::Module {
     embeddings_->load_state_dict(
         state_dict.get_dict_with_prefix("embeddings."));
     encoder_->load_state_dict(state_dict.get_dict_with_prefix("encoder."));
-
-    const auto final_layer_norm_weight =
-        state_dict.get_tensor("final_layer_norm.weight");
-    if (final_layer_norm_weight.defined()) {
-      DCHECK_EQ(final_layer_norm_weight.sizes(),
-                final_layer_norm_->weight.sizes())
-          << "final_layer_norm weight size mismatch";
-      final_layer_norm_->weight.data().copy_(final_layer_norm_weight);
-      final_layer_norm_weight_loaded_ = true;
-    }
-
-    const auto final_layer_norm_bias =
-        state_dict.get_tensor("final_layer_norm.bias");
-    if (final_layer_norm_bias.defined()) {
-      DCHECK_EQ(final_layer_norm_bias.sizes(), final_layer_norm_->bias.sizes())
-          << "final_layer_norm bias size mismatch";
-      final_layer_norm_->bias.data().copy_(final_layer_norm_bias);
-      final_layer_norm_bias_loaded_ = true;
-    }
+    final_layer_norm_weight_loaded_ = state_dict.copy_tensor_to(
+        "final_layer_norm.weight", final_layer_norm_->weight);
+    final_layer_norm_bias_loaded_ = state_dict.copy_tensor_to(
+        "final_layer_norm.bias", final_layer_norm_->bias);
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
