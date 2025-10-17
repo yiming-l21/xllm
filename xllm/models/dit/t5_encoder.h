@@ -17,8 +17,6 @@
 #include "dit_linear.h"
 #include "framework/model_context.h"
 #include "models/model_registry.h"
-#include "processors/input_processor.h"
-#include "processors/pywarpper_image_processor.h"
 
 namespace xllm {
 // T5 model compatible with huggingface weights
@@ -26,17 +24,12 @@ namespace xllm {
 // https://github.com/huggingface/transformers/tree/main/src/transformers/models/t5
 class T5LayerNormImpl : public torch::nn::Module {
  public:
-  torch::Tensor weight;
-  double variance_epsilon;
-  torch::Device device_;
-  torch::ScalarType dtype_;
-
- public:
-  T5LayerNormImpl(int64_t hidden_size,
-                  double eps = 1e-6,
-                  torch::Device device = torch::kCPU,
-                  torch::ScalarType dtype = torch::kBFloat16)
-      : variance_epsilon(eps), device_(device), dtype_(dtype) {
+  T5LayerNormImpl(ModelContext context)
+      : device_(context.get_tensor_options().device()),
+        dtype_(context.get_tensor_options().dtype().toScalarType()) {
+    ModelArgs model_args = context.get_model_args();
+    int64_t hidden_size = model_args.t5_d_model();
+    variance_epsilon = model_args.t5_layer_norm_epsilon();
     weight = register_parameter(
         "weight", torch::ones({hidden_size}).to(device_).to(dtype_));
   }
@@ -60,6 +53,14 @@ class T5LayerNormImpl : public torch::nn::Module {
       weight.data().copy_(weight_tensor);
     }
   }
+
+ public:
+  torch::Tensor weight;
+  double variance_epsilon;
+
+ private:
+  torch::Device device_;
+  torch::ScalarType dtype_;
 };
 TORCH_MODULE(T5LayerNorm);
 
@@ -209,10 +210,7 @@ class T5LayerFFNImpl : public torch::nn::Module {
   T5LayerFFNImpl(const ModelContext& context) {
     auto model_args = context.get_model_args();
     auto options = context.get_tensor_options();
-    layer_norm_ =
-        register_module("layer_norm",
-                        T5LayerNorm(model_args.t5_d_model(),
-                                    model_args.t5_layer_norm_epsilon()));
+    layer_norm_ = register_module("layer_norm", T5LayerNorm(context));
     if (model_args.t5_is_gated_act()) {
       dense_relu_dense_ =
           register_module("DenseReluDense",
@@ -356,88 +354,12 @@ class T5AttentionImpl : public torch::nn::Module {
     }
   }
 
-  torch::Tensor _relative_position_bucket(torch::Tensor& relative_position,
-                                          bool bidirectional = true,
-                                          int64_t num_buckets = 32,
-                                          int64_t max_distance = 128) const {
-    torch::Tensor relative_buckets =
-        torch::zeros_like(relative_position, torch::kLong);
-    if (bidirectional) {
-      num_buckets /= 2;
-      relative_buckets +=
-          (relative_position > 0).to(torch::kLong) * num_buckets;
-      auto abs_relative_position = torch::abs(relative_position);
-      relative_position = abs_relative_position;
-    } else {
-      relative_position =
-          -torch::min(relative_position, torch::zeros_like(relative_position));
-    }
-    int64_t max_exact = num_buckets / 2;
-    torch::Tensor is_small = relative_position < max_exact;
-    auto relative_position_float = relative_position.to(torch::kFloat);
-    auto max_exact_float = static_cast<float>(max_exact);
-    auto max_distance_float = static_cast<float>(max_distance);
-    torch::Tensor relative_position_if_large =
-        max_exact + (torch::log(relative_position_float / max_exact_float) /
-                     std::log(max_distance_float / max_exact_float) *
-                     (num_buckets - max_exact))
-                        .to(torch::kLong);
-    relative_position_if_large = torch::min(
-        relative_position_if_large,
-        torch::full_like(
-            relative_position_if_large, num_buckets - 1, torch::kLong));
-    relative_buckets +=
-        torch::where(is_small, relative_position, relative_position_if_large);
-    return relative_buckets;
-  }
-
-  torch::Tensor compute_bias(
-      int64_t query_length,
-      int64_t key_length,
-      std::optional<torch::Device> device = std::nullopt,
-      const std::optional<torch::Tensor>& cache_position = std::nullopt) const {
-    if (!has_relative_attention_bias_) {
-      return torch::zeros(
-          {1, n_heads_, query_length, key_length},
-          torch::dtype(torch::kFloat).device(device.value_or(torch::kCPU)));
-    }
-
-    torch::Device dev =
-        device.value_or(relative_attention_bias_->weight.device());
-
-    torch::Tensor context_position;
-    if (cache_position.has_value()) {
-      context_position = cache_position.value().unsqueeze(1).to(dev);
-    } else {
-      context_position =
-          torch::arange(query_length, torch::dtype(torch::kLong).device(dev))
-              .unsqueeze(1);
-    }
-
-    torch::Tensor memory_position =
-        torch::arange(key_length, torch::dtype(torch::kLong).device(dev))
-            .unsqueeze(0);
-    torch::Tensor relative_position = memory_position - context_position;
-    torch::Tensor relative_position_bucket =
-        _relative_position_bucket(relative_position,
-                                  true,
-                                  relative_attention_num_buckets_,
-                                  relative_attention_max_distance_);
-    torch::Tensor values =
-        const_cast<torch::nn::EmbeddingImpl*>(relative_attention_bias_.get())
-            ->forward(relative_position_bucket);
-    values = values.permute({2, 0, 1}).unsqueeze(0);
-
-    return values;
-  }
-
   std::vector<torch::Tensor> forward(
       const torch::Tensor& hidden_states,
       const std::optional<torch::Tensor>& mask = std::nullopt,
       const std::optional<torch::Tensor>& key_value_states = std::nullopt,
       const std::optional<torch::Tensor>& position_bias = std::nullopt,
-      const std::optional<torch::Tensor>& layer_head_mask = std::nullopt,
-      bool output_attentions = false) {
+      const std::optional<torch::Tensor>& layer_head_mask = std::nullopt) {
     int64_t batch_size = hidden_states.size(0);
     int64_t seq_length = hidden_states.size(1);
     bool is_cross_attention = key_value_states.has_value();
@@ -511,9 +433,6 @@ class T5AttentionImpl : public torch::nn::Module {
     attn_output = attn_output.view({batch_size, -1, inner_dim_});
     attn_output = o_->forward(attn_output);
     std::vector<torch::Tensor> outputs = {attn_output, curr_position_bias};
-    if (output_attentions) {
-      outputs.push_back(attn_weights);
-    }
     return outputs;
   }
 
@@ -560,6 +479,77 @@ class T5AttentionImpl : public torch::nn::Module {
   }
 
  private:
+  torch::Tensor _relative_position_bucket(torch::Tensor& relative_position,
+                                          bool bidirectional = true,
+                                          int64_t num_buckets = 32,
+                                          int64_t max_distance = 128) const {
+    torch::Tensor relative_buckets =
+        torch::zeros_like(relative_position, torch::kLong);
+    if (bidirectional) {
+      num_buckets /= 2;
+      relative_buckets +=
+          (relative_position > 0).to(torch::kLong) * num_buckets;
+      auto abs_relative_position = torch::abs(relative_position);
+      relative_position = abs_relative_position;
+    } else {
+      relative_position =
+          -torch::min(relative_position, torch::zeros_like(relative_position));
+    }
+    int64_t max_exact = num_buckets / 2;
+    torch::Tensor is_small = relative_position < max_exact;
+    auto relative_position_float = relative_position.to(torch::kFloat);
+    auto max_exact_float = static_cast<float>(max_exact);
+    auto max_distance_float = static_cast<float>(max_distance);
+    torch::Tensor relative_position_if_large =
+        max_exact + (torch::log(relative_position_float / max_exact_float) /
+                     std::log(max_distance_float / max_exact_float) *
+                     (num_buckets - max_exact))
+                        .to(torch::kLong);
+    relative_position_if_large = torch::min(
+        relative_position_if_large,
+        torch::full_like(
+            relative_position_if_large, num_buckets - 1, torch::kLong));
+    relative_buckets +=
+        torch::where(is_small, relative_position, relative_position_if_large);
+    return relative_buckets;
+  }
+
+  torch::Tensor compute_bias(
+      int64_t query_length,
+      int64_t key_length,
+      std::optional<torch::Device> device = std::nullopt) const {
+    if (!has_relative_attention_bias_) {
+      return torch::zeros(
+          {1, n_heads_, query_length, key_length},
+          torch::dtype(torch::kFloat).device(device.value_or(torch::kCPU)));
+    }
+
+    torch::Device dev =
+        device.value_or(relative_attention_bias_->weight.device());
+
+    torch::Tensor context_position;
+    context_position =
+        torch::arange(query_length, torch::dtype(torch::kLong).device(dev))
+            .unsqueeze(1);
+
+    torch::Tensor memory_position =
+        torch::arange(key_length, torch::dtype(torch::kLong).device(dev))
+            .unsqueeze(0);
+    torch::Tensor relative_position = memory_position - context_position;
+    torch::Tensor relative_position_bucket =
+        _relative_position_bucket(relative_position,
+                                  true,
+                                  relative_attention_num_buckets_,
+                                  relative_attention_max_distance_);
+    torch::Tensor values =
+        const_cast<torch::nn::EmbeddingImpl*>(relative_attention_bias_.get())
+            ->forward(relative_position_bucket);
+    values = values.permute({2, 0, 1}).unsqueeze(0);
+
+    return values;
+  }
+
+ private:
   bool has_relative_attention_bias_;
   int64_t relative_attention_num_buckets_;
   int64_t relative_attention_max_distance_;
@@ -585,10 +575,7 @@ class T5LayerSelfAttentionImpl : public torch::nn::Module {
     auto options = context.get_tensor_options();
     self_attention_ = register_module(
         "SelfAttention", T5Attention(context, has_relative_attention_bias));
-    layer_norm_ =
-        register_module("layer_norm",
-                        T5LayerNorm(model_args.t5_d_model(),
-                                    model_args.t5_layer_norm_epsilon()));
+    layer_norm_ = register_module("layer_norm", T5LayerNorm(context));
   }
 
   void load_state_dict(const StateDict& state_dict) {
@@ -602,22 +589,17 @@ class T5LayerSelfAttentionImpl : public torch::nn::Module {
       const torch::Tensor& hidden_states,
       const std::optional<torch::Tensor>& attention_mask = std::nullopt,
       const std::optional<torch::Tensor>& position_bias = std::nullopt,
-      const std::optional<torch::Tensor>& layer_head_mask = std::nullopt,
-      bool output_attentions = false) {
+      const std::optional<torch::Tensor>& layer_head_mask = std::nullopt) {
     torch::Tensor normed_hidden_states = layer_norm_->forward(hidden_states);
     auto attention_output = self_attention_->forward(normed_hidden_states,
                                                      attention_mask,
                                                      std::nullopt,
                                                      position_bias,
-                                                     layer_head_mask,
-                                                     output_attentions);
+                                                     layer_head_mask);
     torch::Tensor updated_hidden_states = hidden_states + attention_output[0];
     // hidden_states, position_bias, [attn_weights])
     std::vector<torch::Tensor> outputs = {updated_hidden_states};
     outputs.push_back(attention_output[1]);
-    if (output_attentions && attention_output.size() > 2) {
-      outputs.push_back(attention_output[2]);
-    }
     return outputs;
   }
 
@@ -642,13 +624,9 @@ class T5BlockImpl : public torch::nn::Module {
       const torch::Tensor& hidden_states,
       const std::optional<torch::Tensor>& attention_mask = std::nullopt,
       const std::optional<torch::Tensor>& position_bias = std::nullopt,
-      const std::optional<torch::Tensor>& layer_head_mask = std::nullopt,
-      bool output_attentions = false) {
-    auto self_attention_outputs = self_attention_->forward(hidden_states,
-                                                           attention_mask,
-                                                           position_bias,
-                                                           layer_head_mask,
-                                                           output_attentions);
+      const std::optional<torch::Tensor>& layer_head_mask = std::nullopt) {
+    auto self_attention_outputs = self_attention_->forward(
+        hidden_states, attention_mask, position_bias, layer_head_mask);
     torch::Tensor curr_hidden_states = self_attention_outputs[0];
     std::vector<torch::Tensor> attention_outputs;
     for (size_t i = 1; i < self_attention_outputs.size(); ++i) {
@@ -692,6 +670,8 @@ class T5BlockImpl : public torch::nn::Module {
 
     return torch::clamp(x, -clamp_value, clamp_value);
   }
+
+ private:
   T5LayerSelfAttention self_attention_{nullptr};
   T5LayerFFN ff_layer_{nullptr};
 };
@@ -713,86 +693,39 @@ class T5EncoderModelImpl : public torch::nn::Module {
                                         T5Block(context, has_relative_bias)));
     }
     final_layer_norm_ =
-        register_module("final_layer_norm",
-                        T5LayerNorm(model_args.t5_d_model(),
-                                    model_args.t5_layer_norm_epsilon()));
+        register_module("final_layer_norm", T5LayerNorm(context));
   }
 
   torch::nn::Embedding& get_input_embeddings() { return embed_tokens_; }
+
   void set_input_embeddings(const torch::nn::Embedding& new_embeddings) {
     embed_tokens_ = new_embeddings;
   }
 
   torch::Tensor forward(const torch::Tensor& input_ids) {
-    // prepare input parameters
-    // input parameters
-    // input_ids
     auto options = torch::TensorOptions()
                        .dtype(torch::typeMetaToScalarType(input_ids.dtype()))
                        .device(input_ids.device());
-    bool output_hidden_states = false;
-    bool output_attentions = false;
-    std::optional<torch::Tensor> attention_mask = std::nullopt;
-    std::optional<torch::Tensor> head_mask = std::nullopt;
     torch::Tensor hidden_states = embed_tokens_->forward(input_ids);
     auto input_shape =
         hidden_states.sizes();  // (batch_size, seq_length, d_model)
     int64_t batch_size = input_shape[0];
     int64_t seq_length = input_shape[1];
     torch::Tensor causal_mask;
-    if (attention_mask.has_value()) {
-      causal_mask =
-          attention_mask.value().unsqueeze(1).unsqueeze(1).to(options);
-      causal_mask = (1.0 - causal_mask) * std::numeric_limits<float>::lowest();
-    } else {
-      causal_mask = torch::Tensor();
-    }
+    causal_mask = torch::Tensor();
     std::vector<torch::Tensor> all_hidden_states;
     std::vector<torch::Tensor> all_attentions;
-    if (output_hidden_states) {
-      all_hidden_states.push_back(hidden_states);
-    }
     torch::Tensor position_bias = torch::Tensor();
     for (size_t i = 0; i < blocks_.size(); ++i) {
-      torch::Tensor layer_head_mask;
-      if (head_mask.has_value()) {
-        layer_head_mask =
-            head_mask.value().index({torch::tensor((int64_t)i)}).to(options);
-      } else {
-        layer_head_mask = torch::Tensor();
-      }
-      auto layer_outputs = blocks_[i]->forward(hidden_states,
-                                               causal_mask,
-                                               position_bias,
-                                               layer_head_mask,
-                                               output_attentions);
+      torch::Tensor layer_head_mask = torch::Tensor();
+      auto layer_outputs = blocks_[i]->forward(
+          hidden_states, causal_mask, position_bias, layer_head_mask);
       hidden_states = layer_outputs[0];
       position_bias = layer_outputs[1];
-      if (output_hidden_states) {
-        all_hidden_states.push_back(hidden_states);
-      }
-      if (output_attentions && layer_outputs.size() > 2) {
-        all_attentions.push_back(layer_outputs[2]);
-      }
-
       layer_outputs.clear();
     }
     hidden_states = final_layer_norm_->forward(hidden_states);
-    if (output_hidden_states) {
-      all_hidden_states.push_back(hidden_states);
-    }
-    std::vector<torch::Tensor> outputs = {hidden_states};
-    if (output_hidden_states) {
-      outputs.push_back(
-          torch::stack(all_hidden_states,
-                       1));  // (batch_size, num_layers, seq_length, d_model)
-    }
-    if (output_attentions) {
-      outputs.push_back(torch::stack(
-          all_attentions,
-          1));  // (batch_size, num_layers, n_heads, seq_length, seq_length)
-    }
-    return outputs[0];
+    return hidden_states;
   }
 
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {

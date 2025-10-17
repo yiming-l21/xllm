@@ -14,17 +14,8 @@
 #include "core/framework/model/model_input_params.h"
 #include "core/framework/state_dict/state_dict.h"
 #include "models/model_registry.h"
-#include "processors/input_processor.h"
-#include "processors/pywarpper_image_processor.h"
 
 namespace xllm {
-
-struct FlowMatchEulerDiscreteSchedulerOutput {
-  torch::Tensor prev_sample;
-  explicit FlowMatchEulerDiscreteSchedulerOutput(torch::Tensor sample)
-      : prev_sample(std::move(sample)) {}
-};
-
 class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
  public:
   explicit FlowMatchEulerDiscreteSchedulerImpl(const ModelContext& context)
@@ -177,8 +168,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
       sigmas_tensor = convert_to_karras(sigmas_tensor, num_steps);
     } else if (use_exponential_sigmas_) {
       sigmas_tensor = convert_to_exponential(sigmas_tensor, num_steps);
-    } else if (use_beta_sigmas_) {
-      sigmas_tensor = convert_to_beta(sigmas_tensor, num_steps);
     }
 
     sigmas_tensor = sigmas_tensor.to(device).to(torch::kFloat32);
@@ -204,7 +193,7 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
     begin_index_ = std::nullopt;
   }
 
-  FlowMatchEulerDiscreteSchedulerOutput step(
+  torch::Tensor step(
       const torch::Tensor& model_output,
       const torch::Tensor& timestep,
       const torch::Tensor& sample,
@@ -262,7 +251,7 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
     if (!per_token_timesteps.has_value()) {
       prev_sample = prev_sample.to(model_output.dtype());
     }
-    return FlowMatchEulerDiscreteSchedulerOutput(prev_sample);
+    return prev_sample;
   }
 
   std::optional<int> step_index() const { return step_index_; }
@@ -271,51 +260,7 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
   const torch::Tensor& sigmas() const { return sigmas_; }
   int size() const { return num_train_timesteps_; }
 
-  torch::Tensor forward(const torch::Tensor& tokens,
-                        const torch::Tensor& positions,
-                        std::vector<KVCache>& kv_caches,
-                        const ModelInputParams& input_params) {
-    // 1. Test params (can be passed in via input_params, or hard-coded for
-    // debugging purposes.)
-    const int num_inference_steps = 50;
-    const float mu = 0.5f;              // Dynamic offset parameter
-    const bool use_stochastic = false;  // Test the deterministic mode first.
-
-    // 2. config the scheduler
-    this->set_timesteps(
-        num_inference_steps, tokens.device(), /*sigmas=*/std::nullopt, mu);
-    this->set_begin_index(0);
-
-    // 3. Generate test inputs (with fixed random seed to ensure
-    // reproducibility)
-    torch::manual_seed(42);  // Fixed random seed for reproducibility
-    torch::Tensor sample = torch::randn(
-        {1, 3, 32, 32}, torch::dtype(torch::kFloat32));  // Mock sample
-    torch::Tensor model_output =
-        torch::randn_like(sample);                  // Mock model output
-    torch::Tensor timestep = this->timesteps()[0];  // Initial timestep
-    model_output =
-        model_output.to(timestep.device())
-            .to(torch::kFloat32);  // Ensure same device and dtype as sample
-    sample =
-        sample.to(timestep.device())
-            .to(torch::kFloat32);  // Ensure same device and dtype as timestep
-    // 4. Execute one step of the scheduler calculation
-    auto output = this->step(model_output,
-                             timestep,
-                             sample,
-                             0.0f,
-                             0.0f,
-                             std::numeric_limits<float>::infinity(),
-                             1.0f,
-                             /*generator=*/std::nullopt,
-                             /*per_token_timesteps=*/std::nullopt);
-
-    return output.prev_sample;
-  }
-
  private:
-  // private tool function
   torch::Tensor convert_to_karras(const torch::Tensor& in_sigmas,
                                   int num_inference_steps) {
     float sigma_min = sigma_min_;
@@ -361,15 +306,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
         .clone();
   }
 
-  torch::Tensor convert_to_beta(const torch::Tensor& in_sigmas,
-                                int num_inference_steps,
-                                float alpha = 0.6f,
-                                float beta = 0.6f) {
-    // NOTE: Actual usage requires the `beta distribution` implementation from
-    // scipy, this is just for illustration.
-    LOG(FATAL) << "Beta sigmas implementation requires scipy integration";
-  }
-
   torch::Tensor time_shift_exponential(float mu,
                                        float sigma,
                                        const torch::Tensor& t) {
@@ -403,8 +339,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
   }
 
  private:
-  // Configuration parameters (member variables of the original config
-  // structure)
   int num_train_timesteps_;
   float shift_;
   bool use_dynamic_shifting_;
@@ -416,7 +350,6 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
   bool invert_sigmas_ = false;
   bool use_karras_sigmas_ = false;
   bool use_exponential_sigmas_ = false;
-  bool use_beta_sigmas_ = false;
   bool stochastic_sampling_ = false;
   std::string time_shift_type_;
 

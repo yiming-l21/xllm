@@ -18,8 +18,6 @@
 #include "dit_linear.h"
 #include "framework/model_context.h"
 #include "models/model_registry.h"
-#include "processors/input_processor.h"
-#include "processors/pywarpper_image_processor.h"
 
 namespace xllm {
 // DiT model compatible with huggingface weights
@@ -46,6 +44,7 @@ inline torch::Tensor apply_rotary_emb(const torch::Tensor& x,
           x_rotated.to(torch::kFloat32) * sin.to(torch::kFloat32))
       .to(x.dtype());
 }
+
 class DiTRMSNormImpl : public torch::nn::Module {
  public:
   // Constructor: dim (normalization dimension), eps (stabilization term)
@@ -66,7 +65,7 @@ class DiTRMSNormImpl : public torch::nn::Module {
       }
     }
   }
-  // Forward pass: applies RMS normalization
+
   torch::Tensor forward(const torch::Tensor& hidden_states) {
     auto input_dtype = hidden_states.dtype();
 
@@ -89,6 +88,7 @@ class DiTRMSNormImpl : public torch::nn::Module {
 
     return output;
   }
+
   void load_state_dict(const StateDict& state_dict) {
     if (elementwise_affine_) {
       auto weight = state_dict.get_tensor("weight");
@@ -121,69 +121,7 @@ class DiTRMSNormImpl : public torch::nn::Module {
 TORCH_MODULE(DiTRMSNorm);
 
 class FluxSingleAttentionImpl : public torch::nn::Module {
- private:
-  DiTLinear to_q_{nullptr};
-  DiTLinear to_k_{nullptr};
-  DiTLinear to_v_{nullptr};
-  int64_t heads_;
-  DiTRMSNorm norm_q_{nullptr};
-  DiTRMSNorm norm_k_{nullptr};
-  torch::TensorOptions options_;
-
  public:
-  void load_state_dict(const StateDict& state_dict) {
-    // norm_q
-    norm_q_->load_state_dict(state_dict.get_dict_with_prefix("norm_q."));
-    // norm_k
-    norm_k_->load_state_dict(state_dict.get_dict_with_prefix("norm_k."));
-    // to_q
-    const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
-    if (to_q_state_weight.defined()) {
-      DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
-          << "to_q weight size mismatch: expected " << to_q_->weight.sizes()
-          << " but got " << to_q_state_weight.sizes();
-      to_q_->weight.data().copy_(to_q_state_weight.to(options_));
-    }
-
-    const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
-    if (to_q_state_bias.defined()) {
-      DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
-          << "to_q bias size mismatch: expected " << to_q_->bias.sizes()
-          << " but got " << to_q_state_bias.sizes();
-      to_q_->bias.data().copy_(to_q_state_bias.to(options_));
-    }
-    // to_k
-    const auto to_k_state_weight = state_dict.get_tensor("to_k.weight");
-    if (to_k_state_weight.defined()) {
-      DCHECK_EQ(to_k_->weight.sizes(), to_k_state_weight.sizes())
-          << "to_k weight size mismatch: expected " << to_k_->weight.sizes()
-          << " but got " << to_k_state_weight.sizes();
-      to_k_->weight.data().copy_(to_k_state_weight.to(options_));
-    }
-    const auto to_k_state_bias = state_dict.get_tensor("to_k.bias");
-    if (to_k_state_bias.defined()) {
-      DCHECK_EQ(to_k_->bias.sizes(), to_k_state_bias.sizes())
-          << "to_k bias size mismatch: expected " << to_k_->bias.sizes()
-          << " but got " << to_k_state_bias.sizes();
-      to_k_->bias.data().copy_(to_k_state_bias.to(options_));
-    }
-
-    // to_v
-    const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
-    if (to_v_state_weight.defined()) {
-      DCHECK_EQ(to_v_->weight.sizes(), to_v_state_weight.sizes())
-          << "to_v weight size mismatch: expected " << to_v_->weight.sizes()
-          << " but got " << to_v_state_weight.sizes();
-      to_v_->weight.data().copy_(to_v_state_weight.to(options_));
-    }
-    const auto to_v_state_bias = state_dict.get_tensor("to_v.bias");
-    if (to_v_state_bias.defined()) {
-      DCHECK_EQ(to_v_->bias.sizes(), to_v_state_bias.sizes())
-          << "to_v bias size mismatch: expected " << to_v_->bias.sizes()
-          << " but got " << to_v_state_bias.sizes();
-      to_v_->bias.data().copy_(to_v_state_bias.to(options_));
-    }
-  }
   FluxSingleAttentionImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
@@ -256,30 +194,13 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
     attn_output = attn_output.to(query.dtype());
     return attn_output.transpose(1, 2).flatten(2);
   }
-};
-TORCH_MODULE(FluxSingleAttention);
 
-class FluxAttentionImpl : public torch::nn::Module {
- private:
-  DiTLinear to_q_{nullptr};
-  DiTLinear to_k_{nullptr};
-  DiTLinear to_v_{nullptr};
-  DiTLinear add_q_proj_{nullptr};
-  DiTLinear add_k_proj_{nullptr};
-  DiTLinear add_v_proj_{nullptr};
-  DiTLinear to_out_{nullptr};
-  DiTLinear to_add_out_{nullptr};
-
-  DiTRMSNorm norm_q_{nullptr};
-  DiTRMSNorm norm_k_{nullptr};
-  DiTRMSNorm norm_added_q_{nullptr};
-  DiTRMSNorm norm_added_k_{nullptr};
-  int64_t heads_;
-  torch::TensorOptions options_;
-
- public:
   void load_state_dict(const StateDict& state_dict) {
-    //  to_q
+    // norm_q
+    norm_q_->load_state_dict(state_dict.get_dict_with_prefix("norm_q."));
+    // norm_k
+    norm_k_->load_state_dict(state_dict.get_dict_with_prefix("norm_k."));
+    // to_q
     const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
     if (to_q_state_weight.defined()) {
       DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
@@ -287,6 +208,7 @@ class FluxAttentionImpl : public torch::nn::Module {
           << " but got " << to_q_state_weight.sizes();
       to_q_->weight.data().copy_(to_q_state_weight.to(options_));
     }
+
     const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
     if (to_q_state_bias.defined()) {
       DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
@@ -309,6 +231,7 @@ class FluxAttentionImpl : public torch::nn::Module {
           << " but got " << to_k_state_bias.sizes();
       to_k_->bias.data().copy_(to_k_state_bias.to(options_));
     }
+
     // to_v
     const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
     if (to_v_state_weight.defined()) {
@@ -324,105 +247,21 @@ class FluxAttentionImpl : public torch::nn::Module {
           << " but got " << to_v_state_bias.sizes();
       to_v_->bias.data().copy_(to_v_state_bias.to(options_));
     }
-    // to_out
-    const auto to_out_state_weight = state_dict.get_tensor("to_out.0.weight");
-    if (to_out_state_weight.defined()) {
-      DCHECK_EQ(to_out_->weight.sizes(), to_out_state_weight.sizes())
-          << "to_out weight size mismatch: expected " << to_out_->weight.sizes()
-          << " but got " << to_out_state_weight.sizes();
-      to_out_->weight.data().copy_(to_out_state_weight.to(options_));
-    }
-    const auto to_out_state_bias = state_dict.get_tensor("to_out.0.bias");
-    if (to_out_state_bias.defined()) {
-      DCHECK_EQ(to_out_->bias.sizes(), to_out_state_bias.sizes())
-          << "to_out bias size mismatch: expected " << to_out_->bias.sizes()
-          << " but got " << to_out_state_bias.sizes();
-      to_out_->bias.data().copy_(to_out_state_bias.to(options_));
-    }
-    // to_add_out
-    const auto to_add_out_state_weight =
-        state_dict.get_tensor("to_add_out.weight");
-    if (to_add_out_state_weight.defined()) {
-      DCHECK_EQ(to_add_out_->weight.sizes(), to_add_out_state_weight.sizes())
-          << "to_add_out weight size mismatch: expected "
-          << to_add_out_->weight.sizes() << " but got "
-          << to_add_out_state_weight.sizes();
-      to_add_out_->weight.data().copy_(to_add_out_state_weight.to(options_));
-    }
-    const auto to_add_out_state_bias = state_dict.get_tensor("to_add_out.bias");
-    if (to_add_out_state_bias.defined()) {
-      DCHECK_EQ(to_add_out_->bias.sizes(), to_add_out_state_bias.sizes())
-          << "to_add_out bias size mismatch: expected "
-          << to_add_out_->bias.sizes() << " but got "
-          << to_add_out_state_bias.sizes();
-      to_add_out_->bias.data().copy_(to_add_out_state_bias.to(options_));
-    }
-    // norm_q
-    norm_q_->load_state_dict(state_dict.get_dict_with_prefix("norm_q."));
-    // norm_k
-    norm_k_->load_state_dict(state_dict.get_dict_with_prefix("norm_k."));
-    // norm_added_q
-    norm_added_q_->load_state_dict(
-        state_dict.get_dict_with_prefix("norm_added_q."));
-    // norm_added_k
-    norm_added_k_->load_state_dict(
-        state_dict.get_dict_with_prefix("norm_added_k."));
-    // add_q_proj
-    const auto add_q_proj_state_weight =
-        state_dict.get_tensor("add_q_proj.weight");
-    if (add_q_proj_state_weight.defined()) {
-      DCHECK_EQ(add_q_proj_->weight.sizes(), add_q_proj_state_weight.sizes())
-          << "add_q_proj weight size mismatch: expected "
-          << add_q_proj_->weight.sizes() << " but got "
-          << add_q_proj_state_weight.sizes();
-      add_q_proj_->weight.data().copy_(add_q_proj_state_weight.to(options_));
-    }
-    const auto add_q_proj_state_bias = state_dict.get_tensor("add_q_proj.bias");
-    if (add_q_proj_state_bias.defined()) {
-      DCHECK_EQ(add_q_proj_->bias.sizes(), add_q_proj_state_bias.sizes())
-          << "add_q_proj bias size mismatch: expected "
-          << add_q_proj_->bias.sizes() << " but got "
-          << add_q_proj_state_bias.sizes();
-      add_q_proj_->bias.data().copy_(add_q_proj_state_bias.to(options_));
-    }
-    // add_k_proj
-    const auto add_k_proj_state_weight =
-        state_dict.get_tensor("add_k_proj.weight");
-    if (add_k_proj_state_weight.defined()) {
-      DCHECK_EQ(add_k_proj_->weight.sizes(), add_k_proj_state_weight.sizes())
-          << "add_k_proj weight size mismatch: expected "
-          << add_k_proj_->weight.sizes() << " but got "
-          << add_k_proj_state_weight.sizes();
-      add_k_proj_->weight.data().copy_(add_k_proj_state_weight.to(options_));
-    }
-    const auto add_k_proj_state_bias = state_dict.get_tensor("add_k_proj.bias");
-    if (add_k_proj_state_bias.defined()) {
-      DCHECK_EQ(add_k_proj_->bias.sizes(), add_k_proj_state_bias.sizes())
-          << "add_k_proj bias size mismatch: expected "
-          << add_k_proj_->bias.sizes() << " but got "
-          << add_k_proj_state_bias.sizes();
-      add_k_proj_->bias.data().copy_(add_k_proj_state_bias.to(options_));
-    }
-    // add_v_proj
-    const auto add_v_proj_state_weight =
-        state_dict.get_tensor("add_v_proj.weight");
-    if (add_v_proj_state_weight.defined()) {
-      DCHECK_EQ(add_v_proj_->weight.sizes(), add_v_proj_state_weight.sizes())
-          << "add_v_proj weight size mismatch: expected "
-          << add_v_proj_->weight.sizes() << " but got "
-          << add_v_proj_state_weight.sizes();
-      add_v_proj_->weight.data().copy_(add_v_proj_state_weight.to(options_));
-    }
-    const auto add_v_proj_state_bias = state_dict.get_tensor("add_v_proj.bias");
-    if (add_v_proj_state_bias.defined()) {
-      DCHECK_EQ(add_v_proj_->bias.sizes(), add_v_proj_state_bias.sizes())
-          << "add_v_proj bias size mismatch: expected "
-          << add_v_proj_->bias.sizes() << " but got "
-          << add_v_proj_state_bias.sizes();
-      add_v_proj_->bias.data().copy_(add_v_proj_state_bias.to(options_));
-    }
   }
 
+ private:
+  DiTLinear to_q_{nullptr};
+  DiTLinear to_k_{nullptr};
+  DiTLinear to_v_{nullptr};
+  int64_t heads_;
+  DiTRMSNorm norm_q_{nullptr};
+  DiTRMSNorm norm_k_{nullptr};
+  torch::TensorOptions options_;
+};
+TORCH_MODULE(FluxSingleAttention);
+
+class FluxAttentionImpl : public torch::nn::Module {
+ public:
   FluxAttentionImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
     auto model_args = context.get_model_args();
@@ -587,6 +426,168 @@ class FluxAttentionImpl : public torch::nn::Module {
     encoder_output = to_add_out_->forward(encoder_output);
     return std::make_tuple(hidden_output, encoder_output);
   }
+
+  void load_state_dict(const StateDict& state_dict) {
+    //  to_q
+    const auto to_q_state_weight = state_dict.get_tensor("to_q.weight");
+    if (to_q_state_weight.defined()) {
+      DCHECK_EQ(to_q_->weight.sizes(), to_q_state_weight.sizes())
+          << "to_q weight size mismatch: expected " << to_q_->weight.sizes()
+          << " but got " << to_q_state_weight.sizes();
+      to_q_->weight.data().copy_(to_q_state_weight.to(options_));
+    }
+    const auto to_q_state_bias = state_dict.get_tensor("to_q.bias");
+    if (to_q_state_bias.defined()) {
+      DCHECK_EQ(to_q_->bias.sizes(), to_q_state_bias.sizes())
+          << "to_q bias size mismatch: expected " << to_q_->bias.sizes()
+          << " but got " << to_q_state_bias.sizes();
+      to_q_->bias.data().copy_(to_q_state_bias.to(options_));
+    }
+    // to_k
+    const auto to_k_state_weight = state_dict.get_tensor("to_k.weight");
+    if (to_k_state_weight.defined()) {
+      DCHECK_EQ(to_k_->weight.sizes(), to_k_state_weight.sizes())
+          << "to_k weight size mismatch: expected " << to_k_->weight.sizes()
+          << " but got " << to_k_state_weight.sizes();
+      to_k_->weight.data().copy_(to_k_state_weight.to(options_));
+    }
+    const auto to_k_state_bias = state_dict.get_tensor("to_k.bias");
+    if (to_k_state_bias.defined()) {
+      DCHECK_EQ(to_k_->bias.sizes(), to_k_state_bias.sizes())
+          << "to_k bias size mismatch: expected " << to_k_->bias.sizes()
+          << " but got " << to_k_state_bias.sizes();
+      to_k_->bias.data().copy_(to_k_state_bias.to(options_));
+    }
+    // to_v
+    const auto to_v_state_weight = state_dict.get_tensor("to_v.weight");
+    if (to_v_state_weight.defined()) {
+      DCHECK_EQ(to_v_->weight.sizes(), to_v_state_weight.sizes())
+          << "to_v weight size mismatch: expected " << to_v_->weight.sizes()
+          << " but got " << to_v_state_weight.sizes();
+      to_v_->weight.data().copy_(to_v_state_weight.to(options_));
+    }
+    const auto to_v_state_bias = state_dict.get_tensor("to_v.bias");
+    if (to_v_state_bias.defined()) {
+      DCHECK_EQ(to_v_->bias.sizes(), to_v_state_bias.sizes())
+          << "to_v bias size mismatch: expected " << to_v_->bias.sizes()
+          << " but got " << to_v_state_bias.sizes();
+      to_v_->bias.data().copy_(to_v_state_bias.to(options_));
+    }
+    // to_out
+    const auto to_out_state_weight = state_dict.get_tensor("to_out.0.weight");
+    if (to_out_state_weight.defined()) {
+      DCHECK_EQ(to_out_->weight.sizes(), to_out_state_weight.sizes())
+          << "to_out weight size mismatch: expected " << to_out_->weight.sizes()
+          << " but got " << to_out_state_weight.sizes();
+      to_out_->weight.data().copy_(to_out_state_weight.to(options_));
+    }
+    const auto to_out_state_bias = state_dict.get_tensor("to_out.0.bias");
+    if (to_out_state_bias.defined()) {
+      DCHECK_EQ(to_out_->bias.sizes(), to_out_state_bias.sizes())
+          << "to_out bias size mismatch: expected " << to_out_->bias.sizes()
+          << " but got " << to_out_state_bias.sizes();
+      to_out_->bias.data().copy_(to_out_state_bias.to(options_));
+    }
+    // to_add_out
+    const auto to_add_out_state_weight =
+        state_dict.get_tensor("to_add_out.weight");
+    if (to_add_out_state_weight.defined()) {
+      DCHECK_EQ(to_add_out_->weight.sizes(), to_add_out_state_weight.sizes())
+          << "to_add_out weight size mismatch: expected "
+          << to_add_out_->weight.sizes() << " but got "
+          << to_add_out_state_weight.sizes();
+      to_add_out_->weight.data().copy_(to_add_out_state_weight.to(options_));
+    }
+    const auto to_add_out_state_bias = state_dict.get_tensor("to_add_out.bias");
+    if (to_add_out_state_bias.defined()) {
+      DCHECK_EQ(to_add_out_->bias.sizes(), to_add_out_state_bias.sizes())
+          << "to_add_out bias size mismatch: expected "
+          << to_add_out_->bias.sizes() << " but got "
+          << to_add_out_state_bias.sizes();
+      to_add_out_->bias.data().copy_(to_add_out_state_bias.to(options_));
+    }
+    // norm_q
+    norm_q_->load_state_dict(state_dict.get_dict_with_prefix("norm_q."));
+    // norm_k
+    norm_k_->load_state_dict(state_dict.get_dict_with_prefix("norm_k."));
+    // norm_added_q
+    norm_added_q_->load_state_dict(
+        state_dict.get_dict_with_prefix("norm_added_q."));
+    // norm_added_k
+    norm_added_k_->load_state_dict(
+        state_dict.get_dict_with_prefix("norm_added_k."));
+    // add_q_proj
+    const auto add_q_proj_state_weight =
+        state_dict.get_tensor("add_q_proj.weight");
+    if (add_q_proj_state_weight.defined()) {
+      DCHECK_EQ(add_q_proj_->weight.sizes(), add_q_proj_state_weight.sizes())
+          << "add_q_proj weight size mismatch: expected "
+          << add_q_proj_->weight.sizes() << " but got "
+          << add_q_proj_state_weight.sizes();
+      add_q_proj_->weight.data().copy_(add_q_proj_state_weight.to(options_));
+    }
+    const auto add_q_proj_state_bias = state_dict.get_tensor("add_q_proj.bias");
+    if (add_q_proj_state_bias.defined()) {
+      DCHECK_EQ(add_q_proj_->bias.sizes(), add_q_proj_state_bias.sizes())
+          << "add_q_proj bias size mismatch: expected "
+          << add_q_proj_->bias.sizes() << " but got "
+          << add_q_proj_state_bias.sizes();
+      add_q_proj_->bias.data().copy_(add_q_proj_state_bias.to(options_));
+    }
+    // add_k_proj
+    const auto add_k_proj_state_weight =
+        state_dict.get_tensor("add_k_proj.weight");
+    if (add_k_proj_state_weight.defined()) {
+      DCHECK_EQ(add_k_proj_->weight.sizes(), add_k_proj_state_weight.sizes())
+          << "add_k_proj weight size mismatch: expected "
+          << add_k_proj_->weight.sizes() << " but got "
+          << add_k_proj_state_weight.sizes();
+      add_k_proj_->weight.data().copy_(add_k_proj_state_weight.to(options_));
+    }
+    const auto add_k_proj_state_bias = state_dict.get_tensor("add_k_proj.bias");
+    if (add_k_proj_state_bias.defined()) {
+      DCHECK_EQ(add_k_proj_->bias.sizes(), add_k_proj_state_bias.sizes())
+          << "add_k_proj bias size mismatch: expected "
+          << add_k_proj_->bias.sizes() << " but got "
+          << add_k_proj_state_bias.sizes();
+      add_k_proj_->bias.data().copy_(add_k_proj_state_bias.to(options_));
+    }
+    // add_v_proj
+    const auto add_v_proj_state_weight =
+        state_dict.get_tensor("add_v_proj.weight");
+    if (add_v_proj_state_weight.defined()) {
+      DCHECK_EQ(add_v_proj_->weight.sizes(), add_v_proj_state_weight.sizes())
+          << "add_v_proj weight size mismatch: expected "
+          << add_v_proj_->weight.sizes() << " but got "
+          << add_v_proj_state_weight.sizes();
+      add_v_proj_->weight.data().copy_(add_v_proj_state_weight.to(options_));
+    }
+    const auto add_v_proj_state_bias = state_dict.get_tensor("add_v_proj.bias");
+    if (add_v_proj_state_bias.defined()) {
+      DCHECK_EQ(add_v_proj_->bias.sizes(), add_v_proj_state_bias.sizes())
+          << "add_v_proj bias size mismatch: expected "
+          << add_v_proj_->bias.sizes() << " but got "
+          << add_v_proj_state_bias.sizes();
+      add_v_proj_->bias.data().copy_(add_v_proj_state_bias.to(options_));
+    }
+  }
+
+ private:
+  DiTLinear to_q_{nullptr};
+  DiTLinear to_k_{nullptr};
+  DiTLinear to_v_{nullptr};
+  DiTLinear add_q_proj_{nullptr};
+  DiTLinear add_k_proj_{nullptr};
+  DiTLinear add_v_proj_{nullptr};
+  DiTLinear to_out_{nullptr};
+  DiTLinear to_add_out_{nullptr};
+
+  DiTRMSNorm norm_q_{nullptr};
+  DiTRMSNorm norm_k_{nullptr};
+  DiTRMSNorm norm_added_q_{nullptr};
+  DiTRMSNorm norm_added_k_{nullptr};
+  int64_t heads_;
+  torch::TensorOptions options_;
 };
 TORCH_MODULE(FluxAttention);
 
@@ -611,6 +612,13 @@ class PixArtAlphaTextProjectionImpl : public torch::nn::Module {
     linear_2_->weight.set_data(linear_2_->weight.to(options_));
     linear_2_->bias.set_data(linear_2_->bias.to(options_));
     act_1_ = register_module("act_1", torch::nn::SiLU());
+  }
+
+  torch::Tensor forward(const torch::Tensor& caption) {
+    auto hidden_states = linear_1_->forward(caption);
+    hidden_states = act_1_->forward(hidden_states);
+    hidden_states = linear_2_->forward(hidden_states);
+    return hidden_states;
   }
 
   void load_state_dict(const StateDict& state_dict) {
@@ -640,13 +648,6 @@ class PixArtAlphaTextProjectionImpl : public torch::nn::Module {
           << "linear_2 bias size mismatch";
       linear_2_->bias.data().copy_(linear2_bias.to(options_));
     }
-  }
-
-  torch::Tensor forward(const torch::Tensor& caption) {
-    auto hidden_states = linear_1_->forward(caption);
-    hidden_states = act_1_->forward(hidden_states);
-    hidden_states = linear_2_->forward(hidden_states);
-    return hidden_states;
   }
 
  private:
@@ -735,24 +736,28 @@ class TimestepEmbeddingImpl : public torch::nn::Module {
  public:
   TimestepEmbeddingImpl(int64_t in_channels,
                         int64_t time_embed_dim,
-                        int64_t out_dim,
-                        int64_t cond_proj_dim,
-                        bool sample_proj_bias,
                         torch::TensorOptions& options)
       : options_(options) {
-    linear_1_ = register_module(
-        "linear_1", DiTLinear(in_channels, time_embed_dim, sample_proj_bias));
+    linear_1_ = register_module("linear_1",
+                                DiTLinear(in_channels, time_embed_dim, true));
 
     act_fn_ = register_module("act_fn", torch::nn::SiLU());
 
-    int64_t time_embed_dim_out = (out_dim == -1) ? time_embed_dim : out_dim;
+    int64_t time_embed_dim_out = time_embed_dim;
     linear_2_ = register_module(
-        "linear_2",
-        DiTLinear(time_embed_dim, time_embed_dim_out, sample_proj_bias));
+        "linear_2", DiTLinear(time_embed_dim, time_embed_dim_out, true));
     linear_1_->weight.set_data(linear_1_->weight.to(options_));
     linear_1_->bias.set_data(linear_1_->bias.to(options_));
     linear_2_->weight.set_data(linear_2_->weight.to(options_));
     linear_2_->bias.set_data(linear_2_->bias.to(options_));
+  }
+
+  torch::Tensor forward(const torch::Tensor& sample,
+                        const torch::Tensor& condition = torch::Tensor()) {
+    torch::Tensor x1 = linear_1_->forward(sample);
+    x1 = act_fn_->forward(x1);
+    x1 = linear_2_->forward(x1);
+    return x1;
   }
 
   void load_state_dict(const StateDict& state_dict) {
@@ -785,14 +790,6 @@ class TimestepEmbeddingImpl : public torch::nn::Module {
     }
   }
 
-  torch::Tensor forward(const torch::Tensor& sample,
-                        const torch::Tensor& condition = torch::Tensor()) {
-    torch::Tensor x1 = linear_1_->forward(sample);
-    x1 = act_fn_->forward(x1);
-    x1 = linear_2_->forward(x1);
-    return x1;
-  }
-
  private:
   DiTLinear linear_1_{nullptr};
   DiTLinear linear_2_{nullptr};
@@ -816,6 +813,19 @@ class LabelEmbeddingImpl : public torch::nn::Module {
         torch::nn::Embedding(num_classes + use_cfg_embedding, hidden_size));
   }
 
+  torch::Tensor forward(
+      torch::Tensor labels,
+      c10::optional<torch::Tensor> force_drop_ids = c10::nullopt) {
+    bool use_dropout = dropout_prob_ > 0;
+    if ((is_training() && use_dropout) || force_drop_ids.has_value()) {
+      labels = token_drop(labels, force_drop_ids);
+    }
+
+    torch::Tensor embeddings = embedding_table_->forward(labels);
+    return embeddings;
+  }
+
+ private:
   torch::Tensor token_drop(
       torch::Tensor labels,
       c10::optional<torch::Tensor> force_drop_ids = c10::nullopt) {
@@ -831,18 +841,6 @@ class LabelEmbeddingImpl : public torch::nn::Module {
     return labels;
   }
 
-  torch::Tensor forward(
-      torch::Tensor labels,
-      c10::optional<torch::Tensor> force_drop_ids = c10::nullopt) {
-    bool use_dropout = dropout_prob_ > 0;
-    if ((is_training() && use_dropout) || force_drop_ids.has_value()) {
-      labels = token_drop(labels, force_drop_ids);
-    }
-
-    torch::Tensor embeddings = embedding_table_->forward(labels);
-    return embeddings;
-  }
-
  private:
   torch::nn::Embedding embedding_table_{nullptr};
   int64_t num_classes_;
@@ -851,12 +849,6 @@ class LabelEmbeddingImpl : public torch::nn::Module {
 TORCH_MODULE(LabelEmbedding);
 
 class CombinedTimestepTextProjEmbeddingsImpl : public torch::nn::Module {
- private:
-  Timesteps time_proj_{nullptr};
-  TimestepEmbedding timestep_embedder_{nullptr};
-  PixArtAlphaTextProjection text_embedder_{nullptr};
-  torch::TensorOptions options_;
-
  public:
   CombinedTimestepTextProjEmbeddingsImpl(const ModelContext& context)
       : options_(context.get_tensor_options()) {
@@ -864,27 +856,13 @@ class CombinedTimestepTextProjEmbeddingsImpl : public torch::nn::Module {
     auto embedding_dim = model_args.dit_attention_head_dim() *
                          model_args.dit_num_attention_heads();
     auto pooled_projection_dim = model_args.dit_pooled_projection_dim();
-    // num_channels=256, flip_sin_to_cos=true,
-    // downscale_freq_shift=0, scale=1
     time_proj_ = Timesteps(256, true, 0.0f, 1);
 
     timestep_embedder_ = TimestepEmbedding(
         256,
         embedding_dim,
-        -1,
-        -1,
-        true,
         options_);  // in_channels=256, time_embed_dim=embedding_dim
     text_embedder_ = PixArtAlphaTextProjection(context);
-  }
-
-  void load_state_dict(const StateDict& state_dict) {
-    // timestep_embedder
-    timestep_embedder_->load_state_dict(
-        state_dict.get_dict_with_prefix("timestep_embedder."));
-    // text_embedder
-    text_embedder_->load_state_dict(
-        state_dict.get_dict_with_prefix("text_embedder."));
   }
 
   torch::Tensor forward(const torch::Tensor& timestep,
@@ -895,23 +873,8 @@ class CombinedTimestepTextProjEmbeddingsImpl : public torch::nn::Module {
     auto pooled_projections = text_embedder_(pooled_projection);
     return timesteps_emb + pooled_projections;
   }
-};
-TORCH_MODULE(CombinedTimestepTextProjEmbeddings);
 
-class CombinedTimestepGuidanceTextProjEmbeddingsImpl
-    : public torch::nn::Module {
- private:
-  TimestepEmbedding guidance_embedder_{nullptr};
-  Timesteps time_proj_{nullptr};
-  TimestepEmbedding timestep_embedder_{nullptr};
-  PixArtAlphaTextProjection text_embedder_{nullptr};
-  torch::TensorOptions options_;
-
- public:
   void load_state_dict(const StateDict& state_dict) {
-    // guidance_embedder
-    guidance_embedder_->load_state_dict(
-        state_dict.get_dict_with_prefix("guidance_embedder."));
     // timestep_embedder
     timestep_embedder_->load_state_dict(
         state_dict.get_dict_with_prefix("timestep_embedder."));
@@ -919,6 +882,18 @@ class CombinedTimestepGuidanceTextProjEmbeddingsImpl
     text_embedder_->load_state_dict(
         state_dict.get_dict_with_prefix("text_embedder."));
   }
+
+ private:
+  Timesteps time_proj_{nullptr};
+  TimestepEmbedding timestep_embedder_{nullptr};
+  PixArtAlphaTextProjection text_embedder_{nullptr};
+  torch::TensorOptions options_;
+};
+TORCH_MODULE(CombinedTimestepTextProjEmbeddings);
+
+class CombinedTimestepGuidanceTextProjEmbeddingsImpl
+    : public torch::nn::Module {
+ public:
   CombinedTimestepGuidanceTextProjEmbeddingsImpl(const ModelContext& context)
       : options_(context.get_tensor_options()),
         time_proj_(256,
@@ -936,13 +911,11 @@ class CombinedTimestepGuidanceTextProjEmbeddingsImpl
     timestep_embedder_ = TimestepEmbedding(
         256,
         embedding_dim,
-        -1,
-        -1,
-        true,
         options_);  // in_channels=256, time_embed_dim=embedding_dim
-    guidance_embedder_ = TimestepEmbedding(
-        256, embedding_dim, -1, -1, true, options_);  // in_channels=256
+    guidance_embedder_ =
+        TimestepEmbedding(256, embedding_dim, options_);  // in_channels=256
   }
+
   torch::Tensor forward(const torch::Tensor& timestep,
                         const torch::Tensor& guidance,
                         const torch::Tensor& pooled_projection) {
@@ -958,6 +931,25 @@ class CombinedTimestepGuidanceTextProjEmbeddingsImpl
         text_embedder_->forward(pooled_projection);  // [N, embedding_dim]
     return time_guidance_emb + pooled_projections;   // [N, embedding_dim]
   }
+
+  void load_state_dict(const StateDict& state_dict) {
+    // guidance_embedder
+    guidance_embedder_->load_state_dict(
+        state_dict.get_dict_with_prefix("guidance_embedder."));
+    // timestep_embedder
+    timestep_embedder_->load_state_dict(
+        state_dict.get_dict_with_prefix("timestep_embedder."));
+    // text_embedder
+    text_embedder_->load_state_dict(
+        state_dict.get_dict_with_prefix("text_embedder."));
+  }
+
+ private:
+  TimestepEmbedding guidance_embedder_{nullptr};
+  Timesteps time_proj_{nullptr};
+  TimestepEmbedding timestep_embedder_{nullptr};
+  PixArtAlphaTextProjection text_embedder_{nullptr};
+  torch::TensorOptions options_;
 };
 TORCH_MODULE(CombinedTimestepGuidanceTextProjEmbeddings);
 
@@ -969,8 +961,7 @@ class CombinedTimestepLabelEmbeddingsImpl : public torch::nn::Module {
                                       torch::TensorOptions& options) {
     time_proj_ = register_module("time_proj", Timesteps(256, true, 1, 1));
     timestep_embedder_ = register_module(
-        "timestep_embedder",
-        TimestepEmbedding(256, embedding_dim, -1, -1, true, options));
+        "timestep_embedder", TimestepEmbedding(256, embedding_dim, options));
     class_embedder_ = register_module(
         "class_embedder",
         LabelEmbedding(num_classes, embedding_dim, class_dropout_prob));
@@ -999,20 +990,12 @@ TORCH_MODULE(CombinedTimestepLabelEmbeddings);
 
 class AdaLayerNormZeroImpl : public torch::nn::Module {
  public:
-  AdaLayerNormZeroImpl(int64_t embedding_dim,
-                       int64_t num_embeddings,
-                       bool bias,
-                       torch::TensorOptions options)
+  AdaLayerNormZeroImpl(int64_t embedding_dim, torch::TensorOptions options)
       : options_(options) {
-    if (num_embeddings > 0) {
-      emb_ = register_module("emb",
-                             CombinedTimestepLabelEmbeddings(
-                                 num_embeddings, embedding_dim, 0.1, options_));
-    }
     silu_ = register_module("silu", torch::nn::SiLU());
 
     linear_ = register_module(
-        "linear", DiTLinear(embedding_dim, 6 * embedding_dim, bias));
+        "linear", DiTLinear(embedding_dim, 6 * embedding_dim, true));
     linear_->weight.set_data(linear_->weight.to(options_));
     linear_->bias.set_data(linear_->bias.to(options_));
     norm_ = register_module(
@@ -1021,6 +1004,7 @@ class AdaLayerNormZeroImpl : public torch::nn::Module {
                                  .elementwise_affine(false)
                                  .eps(1e-6)));
   }
+
   std::tuple<torch::Tensor,
              torch::Tensor,
              torch::Tensor,
@@ -1031,9 +1015,6 @@ class AdaLayerNormZeroImpl : public torch::nn::Module {
           const torch::Tensor& class_labels = torch::Tensor(),
           const torch::Tensor& emb = torch::Tensor()) {
     torch::Tensor ada_emb = emb;
-    if (!emb_.is_empty()) {
-      ada_emb = emb_->forward(timestep, class_labels);
-    }
     ada_emb = linear_->forward(silu_->forward(ada_emb));
     auto splits = torch::chunk(ada_emb, 6, 1);
 
@@ -1069,7 +1050,6 @@ class AdaLayerNormZeroImpl : public torch::nn::Module {
   torch::nn::SiLU silu_{nullptr};
   DiTLinear linear_{nullptr};
   torch::nn::LayerNorm norm_{nullptr};
-  CombinedTimestepLabelEmbeddings emb_{nullptr};
   torch::TensorOptions options_;
 };
 TORCH_MODULE(AdaLayerNormZero);
@@ -1077,12 +1057,11 @@ TORCH_MODULE(AdaLayerNormZero);
 class AdaLayerNormZeroSingleImpl : public torch::nn::Module {
  public:
   AdaLayerNormZeroSingleImpl(int64_t embedding_dim,
-                             bool bias,
                              torch::TensorOptions& options)
       : options_(options) {
     silu_ = register_module("silu", torch::nn::SiLU());
     linear_ = register_module(
-        "linear", DiTLinear(embedding_dim, 3 * embedding_dim, bias));
+        "linear", DiTLinear(embedding_dim, 3 * embedding_dim, true));
     linear_->weight.set_data(linear_->weight.to(options_));
     linear_->bias.set_data(linear_->bias.to(options_));
     norm_ = register_module(
@@ -1279,8 +1258,7 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
     auto dim = num_attention_heads * attention_head_dim;
     mlp_hidden_dim_ = dim * 4;
 
-    norm_ =
-        register_module("norm", AdaLayerNormZeroSingle(dim, true, options_));
+    norm_ = register_module("norm", AdaLayerNormZeroSingle(dim, options_));
 
     int64_t mlp_out_dim = mlp_hidden_dim_;
     proj_mlp_ = register_module("proj_mlp", DiTLinear(dim, mlp_out_dim, true));
@@ -1304,6 +1282,7 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
 
     attn_ = register_module("attn", FluxSingleAttention(context));
   }
+
   torch::Tensor forward(
       const torch::Tensor& hidden_states,
       const torch::Tensor& temb,
@@ -1316,9 +1295,6 @@ class FluxSingleTransformerBlockImpl : public torch::nn::Module {
     auto out = proj_out_(hidden_states_cat);
     out = gate.unsqueeze(1) * out;
     out = residual + out;
-    // if (out.scalar_type() == torch::kFloat16) {
-    //   out = torch::clamp(out, -65504.0f, 65504.0f);
-    // }
     return out;
   }
 
@@ -1377,11 +1353,10 @@ class FluxTransformerBlockImpl : public torch::nn::Module {
     auto dim = num_attention_heads * attention_head_dim;
     double eps = 1e-6;
 
-    norm1_ = register_module("norm1",
-                             AdaLayerNormZero(dim, 0, true /*bias*/, options_));
+    norm1_ = register_module("norm1", AdaLayerNormZero(dim, options_));
 
-    norm1_context_ = register_module(
-        "norm1_context", AdaLayerNormZero(dim, 0, true /*bias*/, options_));
+    norm1_context_ =
+        register_module("norm1_context", AdaLayerNormZero(dim, options_));
 
     attn_ = register_module("attn", FluxAttention(context));
     norm2_ = register_module(
@@ -1707,6 +1682,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
       }
     }
   }
+
   int64_t in_channels() { return out_channels_; }
   bool guidance_embeds() { return guidance_embeds_; }
 
@@ -1755,44 +1731,6 @@ class FluxDiTModelImpl : public torch::nn::Module {
     return flux_transformer_2d_model_->guidance_embeds();
   }
 
-  torch::Tensor _prepare_latent_image_ids(int64_t batch_size,
-                                          int64_t height,
-                                          int64_t width) {
-    torch::TensorOptions options =
-        torch::TensorOptions().dtype(torch::kInt64).device(options_.device());
-    torch::Tensor latent_image_ids = torch::zeros({height, width, 3}, options);
-    torch::Tensor row_indices = torch::arange(height, options).unsqueeze(1);
-    latent_image_ids.select(2, 1) = row_indices;
-    torch::Tensor col_indices = torch::arange(width, options).unsqueeze(0);
-    latent_image_ids.select(2, 2) = col_indices;
-    latent_image_ids = latent_image_ids.reshape({height * width, 3});
-
-    return latent_image_ids;
-  }
-  // torch::Tensor forward(const torch::Tensor& tokens,
-  //                       const torch::Tensor& positions,
-  //                       std::vector<KVCache>& kv_caches,
-  //                       const ModelInputParams& input_params) {
-  //   int seed = 42;
-  //   torch::manual_seed(seed);
-  //   auto hidden_states = torch::randn({1, 8100, 64}, options_);
-  //   torch::manual_seed(seed);
-  //   auto encoder_hidden_states = torch::randn({1, 512, 4096}, options_);
-  //   torch::manual_seed(seed);
-  //   auto pooled_projections = torch::randn({1, 768}, options_);
-  //   auto txt_ids = torch::zeros({512, 3}, options_.device());
-  //   auto img_ids = _prepare_latent_image_ids(1, 90, 90);
-  //   torch::Tensor timestep = torch::tensor({1.0f}, options_);
-  //   torch::Tensor guidance = torch::tensor({3.5f}, options_);
-  //   auto output = forward(hidden_states,
-  //                         encoder_hidden_states,
-  //                         pooled_projections,
-  //                         timestep,
-  //                         img_ids,
-  //                         txt_ids,
-  //                         guidance);
-  //   return output;
-  // }
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     flux_transformer_2d_model_->load_model(std::move(loader));
   }
