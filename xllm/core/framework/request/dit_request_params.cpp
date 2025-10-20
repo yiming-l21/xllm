@@ -16,6 +16,9 @@ limitations under the License.
 
 #include "dit_request_params.h"
 
+#include <opencv2/opencv.hpp>
+
+#include "butil/base64.h"
 #include "core/common/instance_name.h"
 #include "core/common/macros.h"
 #include "core/util/uuid.h"
@@ -191,6 +194,27 @@ torch::Tensor proto_to_torch(const proto::Tensor& proto_tensor) {
   return tensor;
 }
 
+torch::Tensor decode_base64_to_tensor(const std::string& b64_str) {
+  std::string raw_bytes;
+  if (!butil::Base64Decode(b64_str, &raw_bytes)) {
+    LOG(FATAL) << "Base64 decode failed";
+  }
+
+  std::vector<uint8_t> img_bytes(raw_bytes.begin(), raw_bytes.end());
+  cv::Mat buf(img_bytes, true);
+  cv::Mat img = cv::imdecode(buf, cv::IMREAD_COLOR);
+  if (img.empty()) LOG(FATAL) << "Failed to decode image";
+
+  cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
+
+  torch::Tensor tensor =
+      torch::from_blob(img.data, {img.rows, img.cols, 3}, torch::kUInt8)
+          .clone();
+  tensor = tensor.to(torch::kFloat32).div(255.0);
+  tensor = tensor.permute({2, 0, 1}).contiguous();
+  return tensor;
+}
+
 std::pair<int, int> splitResolution(const std::string& s) {
   size_t pos = s.find('*');
   int width = std::stoi(s.substr(0, pos));
@@ -241,6 +265,14 @@ DiTRequestParams::DiTRequestParams(const proto::ImageGenerationRequest& request,
   }
   if (input.has_latent()) {
     input_params.latent = proto_to_torch(input.latent());
+  }
+
+  if (input.has_image()) {
+    input_params.image = decode_base64_to_tensor(input.image());
+  }
+
+  if (input.has_mask_image()) {
+    input_params.mask_image = decode_base64_to_tensor(input.mask_image());
   }
 
   // generation params

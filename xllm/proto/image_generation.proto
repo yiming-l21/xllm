@@ -34,6 +34,12 @@ message Input {
 
   // initial latent: [batch_size][channels][height/8][width/8]
   optional Tensor latent = 9;
+
+  // image tensor
+  optional string image = 10;
+
+  // mask_image tensor
+  optional string mask_image = 11;
 }
 
 // Generation parameters container
@@ -58,6 +64,8 @@ message Parameters {
 
   // Maximum sequence length for prompt processing
   optional int32 max_sequence_length = 7;
+
+  optional float strength = 8;
 
   // Array of sigma values for noise scheduling
   // repeated float sigmas = 8;
