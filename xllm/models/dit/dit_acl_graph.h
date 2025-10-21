@@ -51,8 +51,13 @@ class TransBlockAclGraph {
   TransBlockAclGraph();
   ~TransBlockAclGraph();
 
-  void capture(FluxTransformerBlock& model,
-               const torch::TensorOptions& options);
+  std::tuple<torch::Tensor, torch::Tensor> capture(
+      FluxTransformerBlock& model,
+      const torch::TensorOptions& options,
+      torch::Tensor hidden_states,
+      torch::Tensor encoder_hidden_states,
+      torch::Tensor temb,
+      torch::Tensor image_rotary_emb);
 
   std::tuple<torch::Tensor, torch::Tensor> replay(
       torch::Tensor hidden_states,

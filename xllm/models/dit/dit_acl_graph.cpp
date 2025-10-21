@@ -92,17 +92,33 @@ TransBlockAclGraph::TransBlockAclGraph() {}
 
 TransBlockAclGraph::~TransBlockAclGraph() {}
 
-void TransBlockAclGraph::capture(FluxTransformerBlock& model,
-                                 const torch::TensorOptions& options) {
+std::tuple<torch::Tensor, torch::Tensor> TransBlockAclGraph::capture(
+    FluxTransformerBlock& model,
+    const torch::TensorOptions& options,
+    torch::Tensor hidden_states,
+    torch::Tensor encoder_hidden_states,
+    torch::Tensor temb,
+    torch::Tensor image_rotary_emb) {
+  // input tensor
   hidden_states_ = torch::zeros({1, 1024, 3072}, options);
   encoder_hidden_states_ = torch::zeros({1, 512, 3072}, options);
 
   temb_ = torch::zeros({1, 3072}, options);
   image_rotary_emb_ = torch::zeros({2, 1536, 128}, options);
 
+  // output tensor
+  std::get<0>(output_) = torch::zeros({1, 1024, 3072}, options);
+  std::get<1>(output_) = torch::zeros({1, 512, 3072}, options);
+
   torch::npu::synchronize();
   aclrtStream stream =
       c10_npu::getCurrentNPUStream(options.device().index()).stream();
+
+  hidden_states_.copy_(hidden_states, true);
+  encoder_hidden_states_.copy_(encoder_hidden_states, true);
+
+  temb_.copy_(temb, true);
+  image_rotary_emb_.copy_(image_rotary_emb, true);
 
   aclrtSynchronizeStream(stream);
 
@@ -127,6 +143,8 @@ void TransBlockAclGraph::capture(FluxTransformerBlock& model,
 
   torch::npu::synchronize();
   graph_.replay();
+
+  return output_;
 }
 
 std::tuple<torch::Tensor, torch::Tensor> TransBlockAclGraph::replay(

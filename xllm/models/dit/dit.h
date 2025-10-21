@@ -236,6 +236,21 @@ class FluxSingleAttentionImpl : public torch::nn::Module {
                                                          1.0,
                                                          65535,
                                                          65535);
+    // c10::optional<at::Tensor> nulltensor = c10::nullopt;
+    // at::OptionalSymIntArrayRef nulllen = c10::nullopt;
+    // c10::string_view input_layout = "BSND";
+    // int64_t sparse_mode = 0;
+    // auto results =
+    // at_npu::native::custom_ops::npu_fused_infer_attention_score(query, key,
+    // value, nulltensor, nulltensor, nulllen, nulllen, nulltensor,
+    //                                                                             nulltensor, nulltensor, nulltensor, nulltensor, nulltensor, nulltensor,
+    //                                                                             nulltensor, nulltensor, nulltensor, nulltensor, nulltensor, nulltensor,
+    //                                                                             nulltensor, nulltensor, nulltensor, nulllen, nulltensor, nulltensor, nulltensor,
+    //										  head_num_,
+    // pow(head_dim_, -0.5), 2147483647, 2147483647, input_layout, head_num_,
+    //									          sparse_mode,
+    // 2, 0, 0, 0, 0, false);
+
     auto attn_output = std::get<0>(results);
     attn_output = attn_output.to(query.dtype());
     return attn_output.flatten(2);
@@ -431,6 +446,20 @@ class FluxAttentionImpl : public torch::nn::Module {
                                                          1.0,
                                                          65535,
                                                          65535);
+    // c10::optional<at::Tensor> nulltensor = c10::nullopt;
+    // at::OptionalSymIntArrayRef nulllen = c10::nullopt;
+    // c10::string_view input_layout = "BSND";
+    // int64_t sparse_mode = 0;
+    // auto results =
+    // at_npu::native::custom_ops::npu_fused_infer_attention_score(query1, key1,
+    // value1, nulltensor, nulltensor, nulllen, nulllen, nulltensor,
+    //                                                                             nulltensor, nulltensor, nulltensor, nulltensor, nulltensor, nulltensor,
+    //                                                                             nulltensor, nulltensor, nulltensor, nulltensor, nulltensor, nulltensor,
+    //                                                                             nulltensor, nulltensor, nulltensor, nulllen, nulltensor, nulltensor, nulltensor,
+    //                                                                             head_num_, pow(head_dim_, -0.5), 2147483647, 2147483647, input_layout, head_num_,
+    //									          sparse_mode,
+    // 2, 0, 0, 0, 0, false);
+
     auto attn_output = std::get<0>(results);
 
     attn_output = attn_output.reshape({batch_size, -1, attn_heads * head_dim});
@@ -1274,17 +1303,6 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
     torch::Tensor encoder_hidden_states =
         context_embedder_->forward(encoder_hidden_states_input);
 
-    if (enable_acl_graph_ && trans_acl_graphs_.empty()) {
-      for (int64_t i = 0; i < transformer_blocks_->size(); ++i) {
-        auto block = transformer_layers_[i];
-
-        auto acl_graph = std::make_unique<TransBlockAclGraph>();
-        acl_graph->capture(block, options_);
-
-        trans_acl_graphs_.emplace_back(std::move(acl_graph));
-      }
-    }
-
     bool use_step_cache = false;
     bool use_block_cache = false;
     torch::Tensor original_hidden_states = hidden_states;
@@ -1308,11 +1326,26 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
 
         if (!use_block_cache) {
           std::tuple<torch::Tensor, torch::Tensor> output;
+          auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
           if (enable_acl_graph_) {
-            output = trans_acl_graphs_[i]->replay(
-                hidden_states, encoder_hidden_states, temb, image_rotary_emb);
+            if (trans_acl_graphs_.size() <= i) {
+              LOG(INFO) << " trans capture, idx is " << i;
+
+              auto acl_graph = std::make_unique<TransBlockAclGraph>();
+              output = acl_graph->capture(block,
+                                          options_,
+                                          hidden_states,
+                                          encoder_hidden_states,
+                                          temb,
+                                          image_rotary_emb);
+
+              trans_acl_graphs_.emplace_back(std::move(acl_graph));
+            } else {
+              output = trans_acl_graphs_[i]->replay(
+                  hidden_states, encoder_hidden_states, temb, image_rotary_emb);
+              LOG(INFO) << "trans replay, idx is " << i;
+            }
           } else {
-            auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
             output = block->forward(
                 hidden_states, encoder_hidden_states, temb, image_rotary_emb);
           }
