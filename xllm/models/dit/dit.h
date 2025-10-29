@@ -1326,7 +1326,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
 
         if (!use_block_cache) {
           std::tuple<torch::Tensor, torch::Tensor> output;
-          auto block = transformer_blocks_[i]->as<FluxTransformerBlock>();
+          auto block = transformer_layers_[i];
           if (enable_acl_graph_) {
             if (trans_acl_graphs_.size() <= i) {
               LOG(INFO) << " trans capture, idx is " << i;

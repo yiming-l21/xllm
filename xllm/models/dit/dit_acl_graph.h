@@ -8,39 +8,92 @@
 
 namespace xllm {
 
-class FluxDiTModel;
+class CLIPTextModel;
+class T5EncoderModel;
+class VAE;
+class FlowMatchEulerDiscreteScheduler;
 class FluxTransformerBlock;
 class FluxSingleTransformerBlock;
 
-class DiTAclGraph {
+class CLIPAclGraph {
  public:
-  DiTAclGraph();
-  ~DiTAclGraph();
+  CLIPAclGraph() = default;
 
-  void capture(const DiTForwardInput& input,
-               FluxDiTModel& model,
-               const torch::TensorOptions& options);
+  torch::Tensor capture(CLIPTextModel& model,
+                        const torch::TensorOptions& options,
+                        torch::Tensor input_ids);
 
-  torch::Tensor replay(torch::Tensor hidden_states,
-                       torch::Tensor encoder_hidden_states,
-                       torch::Tensor pooled_projections,
-                       torch::Tensor timestep,
-                       torch::Tensor image_rotary_emb,
-                       torch::Tensor guidance,
-                       int64_t step_idx = 0);
+  torch::Tensor replay(torch::Tensor input_ids);
 
  private:
-  aclmdlRI model_;
+  c10_npu::NPUGraph graph_;
 
   // input
-  torch::Tensor hidden_states_;
-  torch::Tensor encoder_hidden_states_;
+  torch::Tensor input_ids_;
 
-  torch::Tensor pooled_projections_;
-  torch::Tensor timestep_;
+  // output
+  torch::Tensor output_;
+};
 
-  torch::Tensor image_rotary_emb_;
-  torch::Tensor guidance_;
+class T5AclGraph {
+ public:
+  T5AclGraph() = default;
+
+  torch::Tensor capture(T5EncoderModel& model,
+                        const torch::TensorOptions& options,
+                        torch::Tensor input_ids);
+
+  torch::Tensor replay(torch::Tensor input_ids);
+
+ private:
+  c10_npu::NPUGraph graph_;
+
+  // input
+  torch::Tensor input_ids_;
+
+  // output
+  torch::Tensor output_;
+};
+
+class VAEAclGraph {
+ public:
+  VAEAclGraph() = default;
+
+  torch::Tensor capture(VAE& model,
+                        const torch::TensorOptions& options,
+                        torch::Tensor latents);
+
+  torch::Tensor replay(torch::Tensor latents);
+
+ private:
+  c10_npu::NPUGraph graph_;
+
+  // input
+  torch::Tensor latents_;
+
+  // output
+  torch::Tensor output_;
+};
+
+class SchedulerAclGraph {
+ public:
+  SchedulerAclGraph() = default;
+
+  torch::Tensor capture(FlowMatchEulerDiscreteScheduler& model,
+                        const torch::TensorOptions& options,
+                        torch::Tensor noise_pred,
+                        torch::Tensor t,
+                        torch::Tensor prepared_latents);
+
+  torch::Tensor replay(torch::Tensor latents);
+
+ private:
+  c10_npu::NPUGraph graph_;
+
+  // input
+  torch::Tensor noise_pred_;
+  torch::Tensor t_;
+  torch::Tensor prepared_latents_;
 
   // output
   torch::Tensor output_;

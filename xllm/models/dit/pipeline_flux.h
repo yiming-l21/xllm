@@ -172,7 +172,29 @@ inline torch::Tensor get_1d_rotary_pos_embed(
   }
 }
 
+class AutoTimer {
+  AutoTimer(const std::string& name) : name_(name) {
+    torch::npu::synchronize();
+    start_time_ = std::chrono::high_resolution_clock::now();
+  }
+
+  ~AutoTimer() {
+    torch::npu::synchronize();
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        end_time - start_time_)
+                        .count();
+    LOG(INFO) << name_ << " took " << duration << " ms.";
+  }
+
+ private:
+  std::string name_;
+  std::chrono::high_resolution_clock::time_point start_time_;
+}
+#define AutoTimerScope(name) AutoTimer timer##__LINE__(name);
+
 class FluxPosEmbedImpl : public torch::nn::Module {
+
  private:
   int64_t theta_;
   std::vector<int64_t> axes_dim_;
@@ -266,8 +288,11 @@ class FluxPipelineImpl : public torch::nn::Module {
   std::unique_ptr<Tokenizer> tokenizer_;
   std::unique_ptr<Tokenizer> tokenizer_2_;
 
-  bool enable_acl_graph_ = false;
-  std::unique_ptr<DiTAclGraph> acl_graph_;
+  bool enable_acl_graph_ = true;
+  std::unique_ptr<CLIPAclGraph> clip_acl_graph_;
+  std::unique_ptr<T5AclGraph> t5_acl_graph_;
+  std::unique_ptr<VAEAclGraph> vae_acl_graph_;
+  std::unique_ptr<SchedulerAclGraph> sch_acl_graph_;
 
  public:
   FluxPipelineImpl(const DiTModelContext& context)
@@ -490,12 +515,6 @@ class FluxPipelineImpl : public torch::nn::Module {
             ? std::make_optional(input.negative_pooled_prompt_embeds)
             : std::nullopt;
 
-    if (enable_acl_graph_ && !acl_graph_) {
-      acl_graph_ = std::make_unique<DiTAclGraph>();
-      acl_graph_->capture(input, transformer_, options_);
-      LOG(INFO) << "acl graph acptured ";
-    }
-
     FluxPipelineOutput output = forward_(
         prompts,                                       // prompt
         prompts_2,                                     // prompt_2
@@ -553,7 +572,22 @@ class FluxPipelineImpl : public torch::nn::Module {
         torch::tensor(text_input_ids_flat, torch::dtype(torch::kLong))
             .view({batch_size, tokenizer_max_length_})
             .to(used_device);
-    auto encoder_output = clip_text_model_->forward(input_ids);
+    torch::Tensor encoder_output;
+    if (enable_acl_graph_) {
+      if (!clip_acl_graph_) {
+        clip_acl_graph_ = std::make_unique<CLIPAclGraph>();
+        encoder_output =
+            clip_acl_graph_->capture(clip_text_model_, options_, input_ids);
+      } else {
+        AutoTimerScope("clip_acl_graph replay");
+        encoder_output = clip_acl_graph_->replay(input_ids);
+      }
+
+    } else {
+      AutoTimerScope("clip_text_model forward");
+      encoder_output = clip_text_model_->forward(input_ids);
+    }
+
     torch::Tensor prompt_embeds = encoder_output;
     prompt_embeds = prompt_embeds.to(used_device).to(_execution_dtype);
     prompt_embeds = prompt_embeds.repeat({1, num_images_per_prompt});
@@ -595,7 +629,19 @@ class FluxPipelineImpl : public torch::nn::Module {
         torch::tensor(text_input_ids_flat, torch::dtype(torch::kLong))
             .view({batch_size, max_sequence_length})
             .to(used_device);
-    torch::Tensor prompt_embeds = t5_->forward(input_ids);
+    torch::Tensor prompt_embeds;
+    if (enable_acl_graph_) {
+      if (t5_acl_graph_ == nullptr) {
+        t5_acl_graph_ = std::make_unique<T5AclGraph>();
+        prompt_embeds = t5_acl_graph_->capture(t5_, options_, input_ids);
+      } else {
+        AutoTimerScope("t5_acl_graph replay");
+        prompt_embeds = t5_acl_graph_->replay(input_ids);
+      }
+    } else {
+      AutoTimerScope("t5 forward");
+      prompt_embeds = t5_->forward(input_ids);
+    }
     prompt_embeds = prompt_embeds.to(used_dtype).to(used_device);
     int64_t seq_len = prompt_embeds.size(1);
     prompt_embeds = prompt_embeds.repeat({1, num_images_per_prompt, 1});
@@ -784,49 +830,43 @@ class FluxPipelineImpl : public torch::nn::Module {
           .to(prepared_latents.dtype())
           .div_(1000.0f);
       int64_t step_id = i + 1;
-      torch::Tensor noise_pred;
-      if (acl_graph_) {
-        noise_pred = acl_graph_->replay(prepared_latents,
-                                        encoded_prompt_embeds,
-                                        encoded_pooled_embeds,
-                                        timestep,
-                                        image_rotary_emb,
-                                        guidance,
-                                        step_id);
-      } else {
-        noise_pred = transformer_->forward(prepared_latents,
-                                           encoded_prompt_embeds,
-                                           encoded_pooled_embeds,
-                                           timestep,
-                                           image_rotary_emb,
-                                           guidance,
-                                           step_id);
-      }
+      torch::Tensor noise_pred = transformer_->forward(prepared_latents,
+                                                       encoded_prompt_embeds,
+                                                       encoded_pooled_embeds,
+                                                       timestep,
+                                                       image_rotary_emb,
+                                                       guidance,
+                                                       step_id);
 
       if (do_true_cfg) {
-        torch::Tensor negative_noise_pred;
-        if (acl_graph_) {
-          negative_noise_pred = acl_graph_->replay(prepared_latents,
-                                                   negative_encoded_embeds,
-                                                   negative_pooled_embeds,
-                                                   timestep,
-                                                   image_rotary_emb,
-                                                   guidance,
-                                                   step_id);
-        } else {
-          negative_noise_pred = transformer_->forward(prepared_latents,
-                                                      negative_encoded_embeds,
-                                                      negative_pooled_embeds,
-                                                      timestep,
-                                                      image_rotary_emb,
-                                                      guidance,
-                                                      step_id);
-        }
+        torch::Tensor negative_noise_pred =
+            transformer_->forward(prepared_latents,
+                                  negative_encoded_embeds,
+                                  negative_pooled_embeds,
+                                  timestep,
+                                  image_rotary_emb,
+                                  guidance,
+                                  step_id);
+
         noise_pred =
             noise_pred + (noise_pred - negative_noise_pred) * true_cfg_scale;
         negative_noise_pred.reset();
       }
-      auto prev_latents = scheduler_->step(noise_pred, t, prepared_latents);
+      torch::Tensor prev_latents;
+      if (enable_acl_graph_) {
+        if (sch_acl_graph_ == nullptr) {
+          sch_acl_graph_ = std::make_unique<SchedulerAclGraph>();
+          prev_latents = sch_acl_graph_->capture(
+              scheduler_, options_, noise_pred, t, prepared_latents);
+        } else {
+          AutoTimerScope("scheduler_acl_graph replay");
+          prev_latents =
+              sch_acl_graph_->replay(noise_pred, t, prepared_latents);
+        }
+      } else {
+        AutoTimerScope("scheduler step");
+        prev_latents = scheduler_->step(noise_pred, t, prepared_latents);
+      }
       prepared_latents = prev_latents.prev_sample.detach();
       std::vector<torch::Tensor> tensors = {prepared_latents, noise_pred};
       noise_pred.reset();
@@ -847,7 +887,19 @@ class FluxPipelineImpl : public torch::nn::Module {
       unpacked_latents =
           (unpacked_latents / vae_scaling_factor_) + vae_shift_factor_;
       unpacked_latents = unpacked_latents.to(_execution_dtype);
-      image = vae_->decode(unpacked_latents).sample;
+
+      if (enable_acl_graph_) {
+        if (vae_acl_graph_ == nullptr) {
+          vae_acl_graph_ = std::make_unique<VAEAclGraph>();
+          image = vae_acl_graph_->capture(vae_, unpacked_latents);
+        } else {
+          AutoTimerScope("vae_acl_graph replay");
+          image = vae_acl_graph_->replay(unpacked_latents);
+        }
+      } else {
+        AutoTimerScope("vae decode");
+        image = vae_->decode(unpacked_latents).sample;
+      }
       image = vae_image_processor_->postprocess(image, output_type);
     }
     return FluxPipelineOutput{{image}};

@@ -17,73 +17,216 @@
 
 namespace xllm {
 
-DiTAclGraph::DiTAclGraph() : model_(nullptr) {}
+torch::Tensor CLIPAclGraph::capture(CLIPTextModel& model,
+                                    const torch::TensorOptions& options,
+                                    torch::Tensor input_ids) {
+  // input tensor
+  input_ids_ = torch::zeros({1, 77}, options.dtype(torch::kInt64));
 
-DiTAclGraph::~DiTAclGraph() {
-  if (model_ != nullptr) aclmdlRIDestroy(model_);
-}
-
-void DiTAclGraph::capture(const DiTForwardInput& input,
-                          FluxDiTModel& model,
-                          const torch::TensorOptions& options) {
-  CHECK(model_ == nullptr) << "graph already captured";
-
-  hidden_states_ = torch::zeros({1, 1024, 64}, options);
-  encoder_hidden_states_ = torch::zeros({1, 512, 4096}, options);
-
-  pooled_projections_ = torch::zeros({1, 768}, options);
-  timestep_ = torch::zeros({1}, options);
-
-  image_rotary_emb_ = torch::zeros({2, 1536, 128}, options);
-  guidance_ = torch::zeros({1}, options);
+  // output tensor
+  output_ = torch::zeros({1, 768}, options);
 
   torch::npu::synchronize();
   aclrtStream stream =
       c10_npu::getCurrentNPUStream(options.device().index()).stream();
 
-  // aclError st = aclmdlRICaptureBegin(stream,
-  // ACL_MODEL_RI_CAPTURE_MODE_RELAXED);
-  aclError st = aclmdlRICaptureBegin(stream, ACL_MODEL_RI_CAPTURE_MODE_GLOBAL);
-  CHECK_EQ(st, ACL_SUCCESS)
-      << "aclmdlRICaptureBegin failed, error code: " << st;
+  input_ids_.copy_(input_ids, true);
 
-  output_ = model->forward(hidden_states_,
-                           encoder_hidden_states_,
-                           pooled_projections_,
-                           timestep_,
-                           image_rotary_emb_,
-                           guidance_,
-                           0);
+  aclrtSynchronizeStream(stream);
 
-  st = aclmdlRICaptureEnd(stream, &model_);
-  CHECK_EQ(st, ACL_SUCCESS) << "aclmdlRICaptureEnd failed, error code: " << st;
+  bool need_restore_stream = false;
+  if (c10_npu::getCurrentNPUStream(options.device().index()) ==
+      c10_npu::getDefaultNPUStream(options.device().index())) {
+    auto secondary_stream =
+        c10_npu::getStreamFromPool(true, options.device().index());
+    c10_npu::setCurrentNPUStream(secondary_stream);
+    need_restore_stream = true;
+  }
+
+  graph_.capture_begin();
+  output_ = model->forward(input_ids_);
+  graph_.capture_end();
+
+  if (need_restore_stream) {
+    c10_npu::setCurrentNPUStream(
+        c10_npu::getDefaultNPUStream(options.device().index()));
+  }
+
   torch::npu::synchronize();
+  graph_.replay();
+
+  return output_;
 }
 
-torch::Tensor DiTAclGraph::replay(torch::Tensor hidden_states,
-                                  torch::Tensor encoder_hidden_states,
-                                  torch::Tensor pooled_projections,
-                                  torch::Tensor timestep,
-                                  torch::Tensor image_rotary_emb,
-                                  torch::Tensor guidance,
-                                  int64_t step_idx) {
-  CHECK(model_ != nullptr) << "graph not captured";
+torch::Tensor CLIPAclGraph::replay(torch::Tensor input_ids) {
+  input_ids_.copy_(input_ids, true);
 
-  hidden_states_.copy_(hidden_states, true);
-  encoder_hidden_states_.copy_(encoder_hidden_states, true);
-
-  pooled_projections_.copy_(pooled_projections, true);
-  timestep_.copy_(timestep, true);
-
-  image_rotary_emb_.copy_(image_rotary_emb, true);
-  guidance_.copy_(guidance, true);
-
-  // replay the graph
   aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
-  aclError st = aclmdlRIExecuteAsync(model_, stream);
 
-  CHECK_EQ(st, ACL_SUCCESS)
-      << "aclmdlRIExecuteAsync failed, error code: " << st;
+  graph_.replay();
+
+  return output_;
+}
+
+torch::Tensor T5AclGraph::capture(T5EncoderModel& model,
+                                  const torch::TensorOptions& options,
+                                  torch::Tensor input_ids) {
+  // input tensor
+  input_ids_ = torch::zeros({1, 512}, options.dtype(torch::kInt64));
+
+  // output tensor
+  output_ = torch::zeros({1, 512, 4096}, options);
+
+  torch::npu::synchronize();
+  aclrtStream stream =
+      c10_npu::getCurrentNPUStream(options.device().index()).stream();
+
+  input_ids_.copy_(input_ids, true);
+
+  aclrtSynchronizeStream(stream);
+
+  bool need_restore_stream = false;
+  if (c10_npu::getCurrentNPUStream(options.device().index()) ==
+      c10_npu::getDefaultNPUStream(options.device().index())) {
+    auto secondary_stream =
+        c10_npu::getStreamFromPool(true, options.device().index());
+    c10_npu::setCurrentNPUStream(secondary_stream);
+    need_restore_stream = true;
+  }
+
+  graph_.capture_begin();
+  output_ = model->forward(input_ids_);
+  graph_.capture_end();
+
+  if (need_restore_stream) {
+    c10_npu::setCurrentNPUStream(
+        c10_npu::getDefaultNPUStream(options.device().index()));
+  }
+
+  torch::npu::synchronize();
+  graph_.replay();
+
+  return output_;
+}
+
+torch::Tensor T5AclGraph::replay(torch::Tensor input_ids) {
+  input_ids_.copy_(input_ids, true);
+
+  aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
+
+  graph_.replay();
+
+  return output_;
+}
+
+torch::Tensor VAEAclGraph::capture(VAE& model,
+                                   const torch::TensorOptions& options,
+                                   torch::Tensor latents) {
+  // input tensor
+  latents_ = torch::zeros({1, 16, 64, 64}, options);
+
+  // output tensor
+  output_ = torch::zeros({1, 3, 512, 512}, options);
+
+  torch::npu::synchronize();
+  aclrtStream stream =
+      c10_npu::getCurrentNPUStream(options.device().index()).stream();
+
+  latents_.copy_(latents, true);
+
+  aclrtSynchronizeStream(stream);
+
+  bool need_restore_stream = false;
+  if (c10_npu::getCurrentNPUStream(options.device().index()) ==
+      c10_npu::getDefaultNPUStream(options.device().index())) {
+    auto secondary_stream =
+        c10_npu::getStreamFromPool(true, options.device().index());
+    c10_npu::setCurrentNPUStream(secondary_stream);
+    need_restore_stream = true;
+  }
+
+  graph_.capture_begin();
+  output_ = model->decode(latents_).sample;
+  graph_.capture_end();
+
+  if (need_restore_stream) {
+    c10_npu::setCurrentNPUStream(
+        c10_npu::getDefaultNPUStream(options.device().index()));
+  }
+
+  torch::npu::synchronize();
+  graph_.replay();
+
+  return output_;
+}
+
+torch::Tensor VAEAclGraph::replay(torch::Tensor latents) {
+  latents_.copy_(latents, true);
+
+  aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
+
+  graph_.replay();
+
+  return output_;
+}
+
+torch::Tensor SchedulerAclGraph::capture(FlowMatchEulerDiscreteScheduler& model,
+                                         const torch::TensorOptions& options,
+                                         torch::Tensor noise_pred,
+                                         torch::Tensor t,
+                                         torch::Tensor prepared_latents) {
+  // input tensor
+  noise_pred_ = torch::zeros({1, 1024, 64}, options);
+  t_ = torch::zeros({1}, options.dtype(torch::kFloat));
+  prepared_latents_ = torch::zeros({1, 1024, 64}, options);
+
+  // output tensor
+  output_ = torch::zeros({1, 1024, 64}, options);
+
+  torch::npu::synchronize();
+  aclrtStream stream =
+      c10_npu::getCurrentNPUStream(options.device().index()).stream();
+
+  noise_pred_.copy_(noise_pred, true);
+  t_.copy_(t, true);
+  prepared_latents_.copy_(prepared_latents, true);
+
+  aclrtSynchronizeStream(stream);
+
+  bool need_restore_stream = false;
+  if (c10_npu::getCurrentNPUStream(options.device().index()) ==
+      c10_npu::getDefaultNPUStream(options.device().index())) {
+    auto secondary_stream =
+        c10_npu::getStreamFromPool(true, options.device().index());
+    c10_npu::setCurrentNPUStream(secondary_stream);
+    need_restore_stream = true;
+  }
+
+  graph_.capture_begin();
+  output_ = model->step(noise_pred_, t_, prepared_latents_).prev_sample;
+  graph_.capture_end();
+
+  if (need_restore_stream) {
+    c10_npu::setCurrentNPUStream(
+        c10_npu::getDefaultNPUStream(options.device().index()));
+  }
+
+  torch::npu::synchronize();
+  graph_.replay();
+
+  return output_;
+}
+
+torch::Tensor SchedulerAclGraph::replay(torch::Tensor noise_pred,
+                                        torch::Tensor t,
+                                        torch::Tensor prepared_latents) {
+  noise_pred_.copy_(noise_pred, true);
+  t_.copy_(t, true);
+  prepared_latents_.copy_(prepared_latents, true);
+
+  aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
+
+  graph_.replay();
 
   return output_;
 }
