@@ -7,7 +7,11 @@
 #include <torch_npu/csrc/libs/init_npu.h>
 #include <torch_npu/torch_npu.h>
 
+#include "autoencoder_kl.h"
+#include "clip_text_model.h"
 #include "dit.h"
+#include "flowmatch_euler_discrete_scheduler.h"
+#include "t5_encoder.h"
 #ifdef TORCH_HIGHER_THAN_PTA6
 #include <torch_npu/csrc/framework/OpCommand.h>
 #else

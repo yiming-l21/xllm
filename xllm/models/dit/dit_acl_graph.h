@@ -85,7 +85,9 @@ class SchedulerAclGraph {
                         torch::Tensor t,
                         torch::Tensor prepared_latents);
 
-  torch::Tensor replay(torch::Tensor latents);
+  torch::Tensor replay(torch::Tensor noise_pred,
+                       torch::Tensor t,
+                       torch::Tensor prepared_latents);
 
  private:
   c10_npu::NPUGraph graph_;

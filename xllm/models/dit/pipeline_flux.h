@@ -173,6 +173,7 @@ inline torch::Tensor get_1d_rotary_pos_embed(
 }
 
 class AutoTimer {
+ public:
   AutoTimer(const std::string& name) : name_(name) {
     torch::npu::synchronize();
     start_time_ = std::chrono::high_resolution_clock::now();
@@ -181,20 +182,20 @@ class AutoTimer {
   ~AutoTimer() {
     torch::npu::synchronize();
     auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
                         end_time - start_time_)
                         .count();
-    LOG(INFO) << name_ << " took " << duration << " ms.";
+    LOG(INFO) << name_ << " took " << duration << " us.";
   }
 
  private:
   std::string name_;
   std::chrono::high_resolution_clock::time_point start_time_;
-}
+};
+
 #define AutoTimerScope(name) AutoTimer timer##__LINE__(name);
 
 class FluxPosEmbedImpl : public torch::nn::Module {
-
  private:
   int64_t theta_;
   std::vector<int64_t> axes_dim_;
@@ -288,7 +289,7 @@ class FluxPipelineImpl : public torch::nn::Module {
   std::unique_ptr<Tokenizer> tokenizer_;
   std::unique_ptr<Tokenizer> tokenizer_2_;
 
-  bool enable_acl_graph_ = true;
+  bool enable_acl_graph_ = false;
   std::unique_ptr<CLIPAclGraph> clip_acl_graph_;
   std::unique_ptr<T5AclGraph> t5_acl_graph_;
   std::unique_ptr<VAEAclGraph> vae_acl_graph_;
@@ -482,6 +483,7 @@ class FluxPipelineImpl : public torch::nn::Module {
     return {packed_latents, latent_image_ids};
   }
   DiTForwardOutput forward(const DiTForwardInput& input) {
+    AutoTimerScope("flux forward");
     const auto& generation_params = input.generation_params;
 
     auto seed = generation_params.seed > 0 ? generation_params.seed : 42;
@@ -863,14 +865,15 @@ class FluxPipelineImpl : public torch::nn::Module {
           prev_latents =
               sch_acl_graph_->replay(noise_pred, t, prepared_latents);
         }
+        prepared_latents = prev_latents;
       } else {
         AutoTimerScope("scheduler step");
-        prev_latents = scheduler_->step(noise_pred, t, prepared_latents);
+        auto prev_latents = scheduler_->step(noise_pred, t, prepared_latents);
+        prepared_latents = prev_latents.prev_sample.detach();
       }
-      prepared_latents = prev_latents.prev_sample.detach();
       std::vector<torch::Tensor> tensors = {prepared_latents, noise_pred};
       noise_pred.reset();
-      prev_latents.prev_sample = torch::Tensor();
+      // prev_latents.prev_sample = torch::Tensor();
 
       if (latents.has_value() &&
           prepared_latents.dtype() != latents.value().dtype()) {
@@ -888,10 +891,10 @@ class FluxPipelineImpl : public torch::nn::Module {
           (unpacked_latents / vae_scaling_factor_) + vae_shift_factor_;
       unpacked_latents = unpacked_latents.to(_execution_dtype);
 
-      if (enable_acl_graph_) {
+      if (enable_acl_graph_ && 0) {
         if (vae_acl_graph_ == nullptr) {
           vae_acl_graph_ = std::make_unique<VAEAclGraph>();
-          image = vae_acl_graph_->capture(vae_, unpacked_latents);
+          image = vae_acl_graph_->capture(vae_, options_, unpacked_latents);
         } else {
           AutoTimerScope("vae_acl_graph replay");
           image = vae_acl_graph_->replay(unpacked_latents);

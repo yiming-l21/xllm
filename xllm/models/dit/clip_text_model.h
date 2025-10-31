@@ -24,14 +24,15 @@ namespace xllm {
 // clip_text_model compatible with huggingface weights
 // ref to:
 // https://github.com/huggingface/transformers/blob/main/src/transformers/models/clip
-torch::Tensor quick_gelu(torch::Tensor x) {
+inline torch::Tensor quick_gelu(torch::Tensor x) {
   return x * torch::sigmoid(1.702 * x);
 }
 
 // causal_mask (batch_size, 1, seq_len, seq_len)
-torch::Tensor _create_4d_causal_attention_mask(torch::IntArrayRef input_shape,
-                                               torch::Dtype dtype,
-                                               torch::Device device) {
+inline torch::Tensor _create_4d_causal_attention_mask(
+    torch::IntArrayRef input_shape,
+    torch::Dtype dtype,
+    torch::Device device) {
   const int64_t bsz = input_shape[0];
   const int64_t tgt_len = input_shape[1];
 

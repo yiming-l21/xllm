@@ -23,6 +23,8 @@
 // VAE model compatible with huggingface weights
 //  ref to:
 //  https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/autoencoders/autoencoder_kl.py
+#include <torch_npu/csrc/core/npu/register/OptionRegister.h>
+// c10_npu::option::SetOption("ALLOW_INTERNAL_FORMAT", "disable");
 
 namespace xllm {
 class VAEImageProcessorImpl : public torch::nn::Module {

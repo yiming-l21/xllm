@@ -63,7 +63,7 @@ class T5LayerNormImpl : public torch::nn::Module {
 };
 TORCH_MODULE(T5LayerNorm);
 
-torch::Tensor gelu_new(const torch::Tensor& x) {
+inline torch::Tensor gelu_new(const torch::Tensor& x) {
   // 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
   const double sqrt_2_over_pi = std::sqrt(2.0 / M_PI);
   return 0.5 * x *
@@ -214,7 +214,7 @@ class T5LayerFFNImpl : public torch::nn::Module {
 };
 TORCH_MODULE(T5LayerFFN);
 
-std::pair<std::unordered_set<int64_t>, torch::Tensor>
+inline std::pair<std::unordered_set<int64_t>, torch::Tensor>
 find_pruneable_heads_and_indices(
     const std::vector<int64_t>& heads,
     int64_t n_heads,
