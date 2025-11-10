@@ -62,10 +62,12 @@ class VAEImageProcessorImpl : public torch::nn::Module {
                                  bool do_normalize = true,
                                  bool do_binarize = false,
                                  bool do_convert_rgb = false,
-                                 bool do_convert_grayscale = false) {
+                                 bool do_convert_grayscale = false,
+                                 int64_t latent_channels = 4) {
     const auto& model_args = context.get_model_args();
+    dtype_ = context.get_tensor_options().dtype().toScalarType();
     scale_factor_ = 1 << model_args.block_out_channels().size();
-    latent_channels_ = 4;
+    latent_channels_ = latent_channels;
     do_resize_ = do_resize;
     do_normalize_ = do_normalize;
     do_binarize_ = do_binarize;
@@ -116,7 +118,6 @@ class VAEImageProcessorImpl : public torch::nn::Module {
     if (channel == latent_channels_) {
       return image;
     }
-
     auto [target_h, target_w] =
         get_default_height_width(processed, height, width);
     if (do_resize_) {
@@ -129,7 +130,7 @@ class VAEImageProcessorImpl : public torch::nn::Module {
     if (do_binarize_) {
       processed = (processed >= 0.5f).to(torch::kFloat32);
     }
-    processed = processed.to(image.dtype());
+    processed = processed.to(dtype_);
     return processed;
   }
 
@@ -202,6 +203,7 @@ class VAEImageProcessorImpl : public torch::nn::Module {
   bool do_binarize_ = false;
   bool do_convert_rgb_ = false;
   bool do_convert_grayscale_ = false;
+  torch::ScalarType dtype_ = torch::kFloat32;
 };
 TORCH_MODULE(VAEImageProcessor);
 

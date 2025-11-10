@@ -1436,7 +1436,7 @@ class FluxTransformer2DModelImpl : public torch::nn::Module {
     proj_out_->verify_loaded_weights(prefix + "proj_out.");
   }
 
-  int64_t in_channels() { return out_channels_; }
+  int64_t in_channels() { return in_channels_; }
   bool guidance_embeds() { return guidance_embeds_; }
 
  private:

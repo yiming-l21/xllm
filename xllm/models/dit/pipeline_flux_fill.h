@@ -35,14 +35,22 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
     vae_shift_factor_ = model_args.shift_factor();
     vae_scaling_factor_ = model_args.scale_factor();
     latent_channels_ = model_args.latent_channels();
-
-    default_sample_size_ = 128;
-    tokenizer_max_length_ = 77;  // TODO: get from config file
+    tokenizer_max_length_ = 77;
     LOG(INFO) << "Initializing FluxFill pipeline...";
-    image_processor_ = VAEImageProcessor(
-        context.get_model_context("vae"), true, true, false, false, false);
-    mask_processor_ = VAEImageProcessor(
-        context.get_model_context("vae"), true, false, true, false, true);
+    image_processor_ = VAEImageProcessor(context.get_model_context("vae"),
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         false,
+                                         latent_channels_);
+    mask_processor_ = VAEImageProcessor(context.get_model_context("vae"),
+                                        true,
+                                        false,
+                                        true,
+                                        false,
+                                        true,
+                                        latent_channels_);
     vae_ = VAE(context.get_model_context("vae"));
     LOG(INFO) << "VAE initialized.";
     pos_embed_ = register_module(
@@ -50,28 +58,17 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
         FluxPosEmbed(10000,
                      context.get_model_args("transformer").axes_dims_rope()));
     transformer_ = FluxDiTModel(context.get_model_context("transformer"));
-    LOG(INFO) << "DiT transformer initialized.";
     t5_ = T5EncoderModel(context.get_model_context("text_encoder_2"));
-    LOG(INFO) << "T5 initialized.";
     clip_text_model_ = CLIPTextModel(context.get_model_context("text_encoder"));
-    LOG(INFO) << "CLIP text model initialized.";
     scheduler_ =
         FlowMatchEulerDiscreteScheduler(context.get_model_context("scheduler"));
-    LOG(INFO) << "FluxFill pipeline initialized.";
     register_module("vae", vae_);
-    LOG(INFO) << "VAE registered.";
     register_module("vae_image_processor", image_processor_);
-    LOG(INFO) << "VAE image processor registered.";
     register_module("mask_processor", mask_processor_);
-    LOG(INFO) << "mask processor registered.";
     register_module("transformer", transformer_);
-    LOG(INFO) << "DiT transformer registered.";
     register_module("t5", t5_);
-    LOG(INFO) << "T5 registered.";
     register_module("scheduler", scheduler_);
-    LOG(INFO) << "Scheduler registered.";
     register_module("clip_text_model", clip_text_model_);
-    LOG(INFO) << "CLIP text model registered.";
   }
 
   DiTForwardOutput forward(const DiTForwardInput& input) {
@@ -426,7 +423,6 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
   FluxDiTModel transformer_{nullptr};
   float vae_scaling_factor_;
   float vae_shift_factor_;
-  int default_sample_size_;
   int64_t latent_channels_;
   FluxPosEmbed pos_embed_{nullptr};
 };
