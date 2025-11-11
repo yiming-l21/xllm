@@ -29,49 +29,45 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
   FluxFillPipelineImpl(const DiTModelContext& context) {
     auto model_args = context.get_model_args("vae");
     options_ = context.get_tensor_options();
-    device_ = options_.device();
-    dtype_ = options_.dtype().toScalarType();
     vae_scale_factor_ = 1 << (model_args.block_out_channels().size() - 1);
     vae_shift_factor_ = model_args.shift_factor();
     vae_scaling_factor_ = model_args.scale_factor();
     latent_channels_ = model_args.latent_channels();
-
-    default_sample_size_ = 128;
-    tokenizer_max_length_ = 77;  // TODO: get from config file
+    tokenizer_max_length_ =
+        context.get_model_args("text_encoder").max_position_embeddings();
     LOG(INFO) << "Initializing FluxFill pipeline...";
-    image_processor_ = VAEImageProcessor(
-        context.get_model_context("vae"), true, true, false, false, false);
-    mask_processor_ = VAEImageProcessor(
-        context.get_model_context("vae"), true, false, true, false, true);
+    image_processor_ = VAEImageProcessor(context.get_model_context("vae"),
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         false,
+                                         latent_channels_);
+    mask_processor_ = VAEImageProcessor(context.get_model_context("vae"),
+                                        true,
+                                        false,
+                                        true,
+                                        false,
+                                        true,
+                                        latent_channels_);
     vae_ = VAE(context.get_model_context("vae"));
     LOG(INFO) << "VAE initialized.";
     pos_embed_ = register_module(
         "pos_embed",
-        FluxPosEmbed(10000,
+        FluxPosEmbed(ROPE_SCALE_BASE,
                      context.get_model_args("transformer").axes_dims_rope()));
     transformer_ = FluxDiTModel(context.get_model_context("transformer"));
-    LOG(INFO) << "DiT transformer initialized.";
     t5_ = T5EncoderModel(context.get_model_context("text_encoder_2"));
-    LOG(INFO) << "T5 initialized.";
     clip_text_model_ = CLIPTextModel(context.get_model_context("text_encoder"));
-    LOG(INFO) << "CLIP text model initialized.";
     scheduler_ =
         FlowMatchEulerDiscreteScheduler(context.get_model_context("scheduler"));
-    LOG(INFO) << "FluxFill pipeline initialized.";
     register_module("vae", vae_);
-    LOG(INFO) << "VAE registered.";
     register_module("vae_image_processor", image_processor_);
-    LOG(INFO) << "VAE image processor registered.";
     register_module("mask_processor", mask_processor_);
-    LOG(INFO) << "mask processor registered.";
     register_module("transformer", transformer_);
-    LOG(INFO) << "DiT transformer registered.";
     register_module("t5", t5_);
-    LOG(INFO) << "T5 registered.";
     register_module("scheduler", scheduler_);
-    LOG(INFO) << "Scheduler registered.";
     register_module("clip_text_model", clip_text_model_);
-    LOG(INFO) << "CLIP text model registered.";
   }
 
   DiTForwardOutput forward(const DiTForwardInput& input) {
@@ -141,13 +137,13 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
     LOG(INFO) << "FluxFill model components loaded, start to load weights to "
                  "sub models";
     transformer_->load_model(std::move(transformer_loader));
-    transformer_->to(device_);
+    transformer_->to(options_.device());
     vae_->load_model(std::move(vae_loader));
-    vae_->to(device_);
+    vae_->to(options_.device());
     t5_->load_model(std::move(t5_loader));
-    t5_->to(device_);
+    t5_->to(options_.device());
     clip_text_model_->load_model(std::move(clip_loader));
-    clip_text_model_->to(device_);
+    clip_text_model_->to(options_.device());
     tokenizer_ = tokenizer_loader->tokenizer();
     tokenizer_2_ = tokenizer_2_loader->tokenizer();
   }
@@ -174,7 +170,7 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
 
     masked_image_latents =
         (masked_image_latents - vae_shift_factor_) * vae_scaling_factor_;
-    masked_image_latents = masked_image_latents.to(device_).to(dtype_);
+    masked_image_latents = masked_image_latents.to(options_);
 
     batch_size = batch_size * num_images_per_prompt;
     if (mask.size(0) < batch_size) {
@@ -203,7 +199,7 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
         {batch_size, vae_scale_factor_ * vae_scale_factor_, height, width});
     mask = pack_latents(
         mask, batch_size, vae_scale_factor_ * vae_scale_factor_, height, width);
-    mask = mask.to(device_).to(dtype_);
+    mask = mask.to(options_);
 
     return {mask, masked_image_latents};
   }
@@ -222,8 +218,7 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
 
     int64_t t_start = std::max(num_inference_steps - init_timestep, int64_t(0));
     int64_t start_idx = t_start * scheduler_->order();
-    auto timesteps =
-        scheduler_->timesteps().slice(0, start_idx).to(device_).to(dtype_);
+    auto timesteps = scheduler_->timesteps().slice(0, start_idx).to(options_);
     scheduler_->set_begin_index(start_idx);
     return {timesteps, num_inference_steps - t_start};
   }
@@ -245,7 +240,7 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
     torch::Tensor latent_image_ids =
         prepare_latent_image_ids(batch_size, height / 2, width / 2);
     if (latents.has_value()) {
-      return {latents.value().to(device_).to(dtype_), latent_image_ids};
+      return {latents.value().to(options_), latent_image_ids};
     }
 
     torch::Tensor image_latents;
@@ -325,7 +320,8 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
                                scheduler_->base_shift(),
                                scheduler_->max_shift());
 
-    retrieve_timesteps(scheduler_, num_inference_steps, device_, sigmas, mu);
+    retrieve_timesteps(
+        scheduler_, num_inference_steps, options_.device(), sigmas, mu);
     torch::Tensor timesteps;
     std::tie(timesteps, num_inference_steps) =
         get_timesteps(num_inference_steps, strength);
@@ -348,8 +344,7 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
                         latents);
 
     if (masked_image_latents.has_value()) {
-      masked_image_latents =
-          masked_image_latents.value().to(device_).to(dtype_);
+      masked_image_latents = masked_image_latents.value().to(options_);
     } else {
       mask_image =
           mask_processor_->preprocess(mask_image.value(), height, width);
@@ -385,11 +380,12 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
                                   width / (vae_scale_factor_ * 2));
 
     torch::Tensor image_rotary_emb =
-        torch::stack({rot_emb1, rot_emb2}, 0).to(device_);
+        torch::stack({rot_emb1, rot_emb2}, 0).to(options_.device());
 
     for (int64_t i = 0; i < timesteps.size(0); ++i) {
       torch::Tensor t = timesteps[i];
-      torch::Tensor timestep = t.expand({latents->size(0)}).to(device_);
+      torch::Tensor timestep =
+          t.expand({latents->size(0)}).to(options_.device());
 
       int64_t step_id = i + 1;
       torch::Tensor input_latents =
@@ -404,7 +400,7 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
                                 guidance,
                                 step_id);
       auto prev_latents = scheduler_->step(noise_pred, t, latents.value());
-      latents = prev_latents.detach().to(device_);
+      latents = prev_latents.detach().to(options_.device());
     }
 
     torch::Tensor output_image;
@@ -414,7 +410,7 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
         (unpacked_latents / vae_scaling_factor_) + vae_shift_factor_;
 
     output_image = vae_->decode(unpacked_latents);
-    output_image = image_processor_->postprocess(output_image, "pil");
+    output_image = image_processor_->postprocess(output_image);
     return std::vector<torch::Tensor>{{output_image}};
   }
 
@@ -426,7 +422,6 @@ class FluxFillPipelineImpl : public FluxPipelineBaseImpl {
   FluxDiTModel transformer_{nullptr};
   float vae_scaling_factor_;
   float vae_shift_factor_;
-  int default_sample_size_;
   int64_t latent_channels_;
   FluxPosEmbed pos_embed_{nullptr};
 };

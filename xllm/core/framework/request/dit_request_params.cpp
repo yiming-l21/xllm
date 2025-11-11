@@ -270,6 +270,16 @@ DiTRequestParams::DiTRequestParams(const proto::ImageGenerationRequest& request,
     }
   }
 
+  if (input.has_control_image()) {
+    std::string raw_bytes;
+    if (!butil::Base64Decode(input.control_image(), &raw_bytes)) {
+      LOG(ERROR) << "Base64 control_image decode failed";
+    }
+    if (!decoder.decode(raw_bytes, input_params.control_image)) {
+      LOG(ERROR) << "Control_image decode failed.";
+    }
+  }
+
   // generation params
   const auto& params = request.parameters();
   if (params.has_size()) {

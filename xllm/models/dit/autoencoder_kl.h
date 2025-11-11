@@ -62,10 +62,12 @@ class VAEImageProcessorImpl : public torch::nn::Module {
                                  bool do_normalize = true,
                                  bool do_binarize = false,
                                  bool do_convert_rgb = false,
-                                 bool do_convert_grayscale = false) {
+                                 bool do_convert_grayscale = false,
+                                 int64_t latent_channels = 4) {
     const auto& model_args = context.get_model_args();
+    options_ = context.get_tensor_options();
     scale_factor_ = 1 << model_args.block_out_channels().size();
-    latent_channels_ = 4;
+    latent_channels_ = latent_channels;
     do_resize_ = do_resize;
     do_normalize_ = do_normalize;
     do_binarize_ = do_binarize;
@@ -116,7 +118,6 @@ class VAEImageProcessorImpl : public torch::nn::Module {
     if (channel == latent_channels_) {
       return image;
     }
-
     auto [target_h, target_w] =
         get_default_height_width(processed, height, width);
     if (do_resize_) {
@@ -129,13 +130,12 @@ class VAEImageProcessorImpl : public torch::nn::Module {
     if (do_binarize_) {
       processed = (processed >= 0.5f).to(torch::kFloat32);
     }
-    processed = processed.to(image.dtype());
+    processed = processed.to(options_);
     return processed;
   }
 
   torch::Tensor postprocess(
       const torch::Tensor& tensor,
-      const std::string& output_type = "pt",
       std::optional<std::vector<bool>> do_denormalize = std::nullopt) {
     torch::Tensor processed = tensor.clone();
     if (do_normalize_) {
@@ -148,9 +148,6 @@ class VAEImageProcessorImpl : public torch::nn::Module {
           }
         }
       }
-    }
-    if (output_type == "np") {
-      return processed.permute({0, 2, 3, 1}).contiguous();
     }
     return processed;
   }
@@ -202,6 +199,7 @@ class VAEImageProcessorImpl : public torch::nn::Module {
   bool do_binarize_ = false;
   bool do_convert_rgb_ = false;
   bool do_convert_grayscale_ = false;
+  torch::TensorOptions options_;
 };
 TORCH_MODULE(VAEImageProcessor);
 

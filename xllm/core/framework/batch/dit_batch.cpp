@@ -62,7 +62,7 @@ DiTForwardInput DiTBatch::prepare_forward_input() {
 
   std::vector<torch::Tensor> images;
   std::vector<torch::Tensor> mask_images;
-
+  std::vector<torch::Tensor> control_images;
   std::vector<torch::Tensor> latents;
   std::vector<torch::Tensor> masked_image_latents;
   for (const auto& request : request_vec_) {
@@ -96,6 +96,7 @@ DiTForwardInput DiTBatch::prepare_forward_input() {
 
     images.emplace_back(input_params.image);
     mask_images.emplace_back(input_params.mask_image);
+    control_images.emplace_back(input_params.control_image);
   }
 
   if (input.prompts.size() != request_vec_.size()) {
@@ -120,6 +121,10 @@ DiTForwardInput DiTBatch::prepare_forward_input() {
 
   if (check_tensors_valid(mask_images)) {
     input.mask_images = torch::stack(mask_images);
+  }
+
+  if (check_tensors_valid(control_images)) {
+    input.control_image = torch::stack(control_images);
   }
 
   if (check_tensors_valid(prompt_embeds)) {

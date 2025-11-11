@@ -36,6 +36,8 @@ limitations under the License.
 
 namespace xllm {
 
+constexpr int64_t ROPE_SCALE_BASE = 10000;
+
 float calculate_shift(int64_t image_seq_len,
                       int64_t base_seq_len = 256,
                       int64_t max_seq_len = 4096,
@@ -213,9 +215,9 @@ class FluxPipelineBaseImpl : public torch::nn::Module {
     auto input_ids =
         torch::tensor(text_input_ids_flat, torch::dtype(torch::kLong))
             .view({batch_size, max_sequence_length})
-            .to(device_);
+            .to(options_.device());
     torch::Tensor prompt_embeds = t5_->forward(input_ids);
-    prompt_embeds = prompt_embeds.to(device_).to(dtype_);
+    prompt_embeds = prompt_embeds.to(options_);
     int64_t seq_len = prompt_embeds.size(1);
     prompt_embeds = prompt_embeds.repeat({1, num_images_per_prompt, 1});
     prompt_embeds =
@@ -244,10 +246,10 @@ class FluxPipelineBaseImpl : public torch::nn::Module {
     auto input_ids =
         torch::tensor(text_input_ids_flat, torch::dtype(torch::kLong))
             .view({batch_size, tokenizer_max_length_})
-            .to(device_);
+            .to(options_.device());
     auto encoder_output = clip_text_model_->forward(input_ids);
     torch::Tensor prompt_embeds = encoder_output;
-    prompt_embeds = prompt_embeds.to(device_).to(dtype_);
+    prompt_embeds = prompt_embeds.to(options_);
     prompt_embeds = prompt_embeds.repeat({1, num_images_per_prompt});
     prompt_embeds =
         prompt_embeds.view({batch_size * num_images_per_prompt, -1});
@@ -281,8 +283,8 @@ class FluxPipelineBaseImpl : public torch::nn::Module {
       prompt_embeds = get_t5_prompt_embeds(
           prompt_2_list, num_images_per_prompt, max_sequence_length);
     }
-    torch::Tensor text_ids = torch::zeros({prompt_embeds.value().size(1), 3},
-                                          torch::device(device_).dtype(dtype_));
+    torch::Tensor text_ids =
+        torch::zeros({prompt_embeds.value().size(1), 3}, options_);
 
     return std::make_tuple(prompt_embeds.value(),
                            pooled_prompt_embeds.has_value()
