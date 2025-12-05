@@ -35,6 +35,8 @@
 namespace xllm {
 namespace qwenimage {
 
+// TODO: This class should be extracted from autoencoder class and integrated
+// into a common class.
 torch::Tensor randn_tensor(const std::vector<int64_t>& shape,
                            int64_t seed,
                            torch::TensorOptions& options) {
@@ -54,6 +56,8 @@ torch::Tensor randn_tensor(const std::vector<int64_t>& shape,
   return latents;
 }
 
+// TODO: This class should be extracted from autoencoder class and integrated
+// into a common class.
 class VAEImageProcessorImpl : public torch::nn::Module {
  public:
   explicit VAEImageProcessorImpl(ModelContext context,
@@ -215,10 +219,8 @@ class QwenImageBaseModule : public torch::nn::Module {
   virtual ~QwenImageBaseModule() = default;
 };
 
-// 配置常量
 const int64_t CACHE_T = 2;
 
-// QwenImageCausalConv3d - 3D因果卷积
 class QwenImageCausalConv3dImpl : public torch::nn::Module {
  public:
   QwenImageCausalConv3dImpl(const ModelContext& context,
@@ -227,9 +229,6 @@ class QwenImageCausalConv3dImpl : public torch::nn::Module {
                             torch::IntArrayRef kernel_size,
                             torch::IntArrayRef stride = 1,
                             torch::IntArrayRef padding = 0) {
-    LOG(INFO) << "in channels " << in_channels;
-    LOG(INFO) << "out channels " << out_channels;
-    LOG(INFO) << "kernel size " << kernel_size;
     conv_ = register_module(
         "conv",
         torch::nn::Conv3d(
@@ -280,9 +279,8 @@ class QwenImageCausalConv3dImpl : public torch::nn::Module {
   std::vector<int64_t> padding_;
 };
 
-// TORCH_MODULE(QwenImageCausalConv3d);
 TORCH_MODULE(QwenImageCausalConv3d);
-// QwenImageRMS_norm - RMS归一化
+
 class QwenImageRMS_normImpl : public torch::nn::Module {
  public:
   QwenImageRMS_normImpl(const ModelContext& context,
@@ -331,12 +329,6 @@ class QwenImageRMS_normImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    LOG(INFO) << state_dict.size();
-    LOG(INFO) << "norm start";
-    for (auto it = state_dict.begin(); it != state_dict.end(); ++it) {
-      LOG(INFO) << "keys are " << it->first;
-    }
-    LOG(INFO) << "norm stop";
     weight::load_weight(state_dict, "gamma", weight_, is_weight_loaded_);
     if (is_bias_) {
       weight::load_weight(state_dict, "bias", bias_, is_bias_loaded_);
@@ -344,12 +336,10 @@ class QwenImageRMS_normImpl : public torch::nn::Module {
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
-    LOG(INFO) << "rms verify start";
     CHECK(is_weight_loaded_)
         << "weight is not loaded for " << prefix + "weight";
     CHECK(!is_bias_ || is_bias_loaded_)
         << "bias is not loaded for " << prefix + "bias";
-    LOG(INFO) << "rms verify stop";
   }
 
  private:
@@ -366,19 +356,12 @@ class QwenImageRMS_normImpl : public torch::nn::Module {
 
 TORCH_MODULE(QwenImageRMS_norm);
 
-// QwenImageUpsample - 上采样
 class QwenImageUpsampleImpl : public torch::nn::Module {
  public:
   QwenImageUpsampleImpl(
       const ModelContext& context,
       const torch::nn::functional::InterpolateFuncOptions options)
-      : options_(options) {
-    /*
-       upsample_ = register_module(
-            "upsample",
-            torch::nn::functional::interpolate(x.to(torch::kFloat), options));
-    */
-  }
+      : options_(options) {}
 
   torch::Tensor forward(const torch::Tensor& x) {
     // auto result = upsample_(x.to(torch::kFloat));
@@ -394,7 +377,6 @@ class QwenImageUpsampleImpl : public torch::nn::Module {
 
 TORCH_MODULE(QwenImageUpsample);
 
-// QwenImageResample - 重采样模块
 class QwenImageResampleImpl : public QwenImageBaseModule {
  public:
   QwenImageResampleImpl(const ModelContext& context,
@@ -468,7 +450,6 @@ class QwenImageResampleImpl : public QwenImageBaseModule {
     auto b = sizes[0], c = sizes[1], t = sizes[2], h = sizes[3], w = sizes[4];
     auto result_x = x;
 
-    // 处理3D上采样模式
     if (mode == "upsample3d" && feat_cache && feat_idx) {
       auto idx = (*feat_idx)[0];
 
@@ -523,7 +504,6 @@ class QwenImageResampleImpl : public QwenImageBaseModule {
             .view({b, t, result_x.size(1), result_x.size(2), result_x.size(3)})
             .permute({0, 2, 1, 3, 4});
 
-    // 处理3D下采样模式
     if (mode == "downsample3d" && feat_cache && feat_idx) {
       auto idx = (*feat_idx)[0];
 
@@ -556,15 +536,13 @@ class QwenImageResampleImpl : public QwenImageBaseModule {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    LOG(INFO) << "resample mode is " << mode;
     auto params = resample->named_parameters();
     for (auto& param : params) {
       std::string name = param.key();
-      if (name == "1.weight") {  // Conv2d的权重
-        // 从文件或张量加载
+      if (name == "1.weight") {
         weight::load_weight(
             state_dict, "resample.1.weight", param.value(), is_weight_loaded_);
-      } else if (name == "1.bias") {  // Conv2d的偏置
+      } else if (name == "1.bias") {
         weight::load_weight(
             state_dict, "resample.1.bias", param.value(), is_bias_loaded_);
       }
@@ -575,14 +553,12 @@ class QwenImageResampleImpl : public QwenImageBaseModule {
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
-    LOG(INFO) << "resample verify start";
     CHECK(is_weight_loaded_)
         << "weight is not loaded for " << prefix + "weight";
     CHECK(is_bias_loaded_) << "bias is not loaded for " << prefix + "bias";
     if (time_conv) {
       time_conv->verify_loaded_weights("time_conv.");
     }
-    LOG(INFO) << "resample verify stop";
   }
 
  private:
@@ -597,7 +573,6 @@ class QwenImageResampleImpl : public QwenImageBaseModule {
 
 TORCH_MODULE(QwenImageResample);
 
-// QwenImageResidualBlock - 残差块
 class QwenImageResidualBlockImpl : public QwenImageBaseModule {
  public:
   QwenImageResidualBlockImpl(const ModelContext& context,
@@ -606,10 +581,8 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
                              double dropout = 0.0,
                              const std::string& non_linearity = "silu")
       : in_dim(in_dim), out_dim(out_dim) {
-    // 激活函数
     activation = register_module("silu", torch::nn::SiLU());
 
-    // 注册模块
     norm1 = register_module(
         "norm1", QwenImageRMS_norm(context, in_dim, true, false, false, false));
     conv1 = register_module("conv1",
@@ -654,15 +627,11 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
     } else {
       h = identity->forward(x);
     }
-    LOG(INFO) << "QwenImageResidualBlockImpl 1";
     auto result_x = x;
 
-    // 第一次归一化和激活
     result_x = norm1->forward(result_x);
     result_x = activation->forward(result_x);
-    LOG(INFO) << "QwenImageResidualBlockImpl 2";
 
-    // 第一次卷积
     if (feat_cache && feat_idx) {
       auto idx = (*feat_idx)[0];
       auto cache_x =
@@ -671,8 +640,6 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
                       torch::indexing::Slice(),
                       torch::indexing::Slice(-CACHE_T, torch::indexing::None)})
               .clone();
-      LOG(INFO) << feat_cache->size();
-      LOG(INFO) << idx;
       if (cache_x.size(2) < 2 && feat_cache->at(idx).defined()) {
         auto last_frame =
             feat_cache->at(idx)
@@ -687,20 +654,13 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
       result_x = conv1->forward(result_x, feat_cache->at(idx));
       feat_cache->at(idx) = cache_x;
       (*feat_idx)[0]++;
-      LOG(INFO) << "QwenImageResidualBlockImpl 3";
     } else {
-      LOG(INFO) << "QwenImageResidualBlockImpl 4";
       result_x = conv1->forward(result_x);
     }
-    LOG(INFO) << "QwenImageResidualBlockImpl 5";
-    // 第二次归一化和激活
     result_x = norm2->forward(result_x);
     result_x = activation->forward(result_x);
-    LOG(INFO) << "QwenImageResidualBlockImpl 6";
-    // Dropout
     result_x = dropout_layer->forward(result_x);
-    LOG(INFO) << "QwenImageResidualBlockImpl 7";
-    // 第二次卷积
+
     if (feat_cache && feat_idx) {
       auto idx = (*feat_idx)[0];
       auto cache_x =
@@ -720,12 +680,10 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
                 .to(cache_x.device());
         cache_x = torch::cat({last_frame, cache_x}, 2);
       }
-      LOG(INFO) << "QwenImageResidualBlockImpl 8";
       result_x = conv2->forward(result_x, feat_cache->at(idx));
       feat_cache->at(idx) = cache_x;
       (*feat_idx)[0]++;
     } else {
-      LOG(INFO) << "QwenImageResidualBlockImpl 9";
       result_x = conv2->forward(result_x);
     }
 
@@ -733,11 +691,6 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    LOG(INFO) << "start";
-    for (auto it = state_dict.begin(); it != state_dict.end(); ++it) {
-      LOG(INFO) << "keys are " << it->first;
-    }
-
     norm1->load_state_dict(state_dict.get_dict_with_prefix("norm1."));
     norm2->load_state_dict(state_dict.get_dict_with_prefix("norm2."));
 
@@ -752,7 +705,6 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
-    LOG(INFO) << "residual verify start";
     norm1->verify_loaded_weights("norm1.");
     norm2->verify_loaded_weights("norm2.");
     conv1->verify_loaded_weights("conv1.");
@@ -760,7 +712,6 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
     if (conv_shortcut) {
       conv_shortcut->verify_loaded_weights("conv_shortcut.");
     }
-    LOG(INFO) << "residual verify stop";
   }
 
  private:
@@ -775,7 +726,6 @@ class QwenImageResidualBlockImpl : public QwenImageBaseModule {
 
 TORCH_MODULE(QwenImageResidualBlock);
 
-// QwenImageAttentionBlock - 注意力块
 class QwenImageAttentionBlockImpl : public QwenImageBaseModule {
  public:
   QwenImageAttentionBlockImpl(const ModelContext& context, int64_t dim)
@@ -795,11 +745,9 @@ class QwenImageAttentionBlockImpl : public QwenImageBaseModule {
     auto sizes = x.sizes();
     auto b = sizes[0], c = sizes[1], t = sizes[2], h = sizes[3], w = sizes[4];
 
-    // 重塑输入
     auto reshaped_x = x.permute({0, 2, 1, 3, 4}).reshape({b * t, c, h, w});
     reshaped_x = norm->forward(reshaped_x);
 
-    // 计算query, key, value
     auto qkv = to_qkv->forward(reshaped_x);
     qkv = qkv.reshape({b * t, 1, c * 3, h * w});
     qkv = qkv.permute({0, 1, 3, 2}).contiguous();
@@ -807,10 +755,6 @@ class QwenImageAttentionBlockImpl : public QwenImageBaseModule {
     auto chunks = qkv.chunk(3, -1);
     auto q = chunks[0], k = chunks[1], v = chunks[2];
 
-    // 应用缩放点积注意力
-    // auto attn_output = torch::nn::functional::scaled_dot_product_attention(
-    //    q, k, v,
-    //    torch::nn::functional::ScaledDotProductAttentionFuncOptions());
     auto results =
         at_npu::native::custom_ops::npu_fusion_attention(q,
                                                          k,
@@ -828,10 +772,8 @@ class QwenImageAttentionBlockImpl : public QwenImageBaseModule {
     attn_output =
         attn_output.squeeze(1).permute({0, 2, 1}).reshape({b * t, c, h, w});
 
-    // 输出投影
     auto output = proj->forward(attn_output);
 
-    // 重塑回原始形状
     output = output.view({b, t, c, h, w}).permute({0, 2, 1, 3, 4});
 
     return output + identity;
@@ -851,7 +793,6 @@ class QwenImageAttentionBlockImpl : public QwenImageBaseModule {
   }
 
   void verify_loaded_weights(const std::string& prefix) {
-    LOG(INFO) << "attn verify start";
     norm->verify_loaded_weights("norm.");
 
     CHECK(is_qkv_weight_loaded_)
@@ -862,7 +803,6 @@ class QwenImageAttentionBlockImpl : public QwenImageBaseModule {
         << "weight is not loaded for " << prefix + "weight";
     CHECK(is_proj_bias_loaded_)
         << "weight is not loaded for " << prefix + "bias";
-    LOG(INFO) << "attn verify end";
   }
 
  private:
@@ -888,11 +828,11 @@ class QwenImageMidBlockImpl : public torch::nn::Module {
       : dim(dim) {
     resnets = register_module("resnets", torch::nn::ModuleList());
     attentions = register_module("attentions", torch::nn::ModuleList());
-    // 创建第一个残差块
+
     auto resnet_0 =
         QwenImageResidualBlock(context, dim, dim, dropout, non_linearity);
     resnets->push_back(resnet_0);
-    // 创建注意力和后续残差块
+
     for (int64_t i = 0; i < num_layers; i++) {
       auto attention = QwenImageAttentionBlock(context, dim);
       attentions->push_back(attention);
@@ -908,11 +848,9 @@ class QwenImageMidBlockImpl : public torch::nn::Module {
                         std::vector<int64_t>* feat_idx = {0}) {
     auto result_x = x;
 
-    // 第一个残差块
     result_x = resnets[0]->as<QwenImageResidualBlock>()->forward(
         result_x, feat_cache, feat_idx);
 
-    // 处理注意力和残差块
     for (size_t i = 0; i < attentions->size(); i++) {
       result_x =
           attentions[i]->as<QwenImageAttentionBlock>()->forward(result_x);
@@ -924,14 +862,12 @@ class QwenImageMidBlockImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    // 加载残差块权重
     for (size_t i = 0; i < resnets->size(); i++) {
       auto prefix = "resnets." + std::to_string(i) + ".";
       resnets[i]->as<QwenImageResidualBlock>()->load_state_dict(
           state_dict.get_dict_with_prefix(prefix));
     }
 
-    // 加载注意力块权重
     for (size_t i = 0; i < attentions->size(); i++) {
       auto prefix = "attentions." + std::to_string(i) + ".";
       attentions[i]->as<QwenImageAttentionBlock>()->load_state_dict(
@@ -940,7 +876,6 @@ class QwenImageMidBlockImpl : public torch::nn::Module {
   }
 
   void verify_loaded_weights(const std::string& prefix) {
-    LOG(INFO) << "mid verify start";
     for (size_t i = 0; i < resnets->size(); i++) {
       auto prefix = "resnets." + std::to_string(i) + ".";
       resnets[i]->as<QwenImageResidualBlock>()->verify_loaded_weights(prefix);
@@ -951,7 +886,6 @@ class QwenImageMidBlockImpl : public torch::nn::Module {
       attentions[i]->as<QwenImageAttentionBlock>()->verify_loaded_weights(
           prefix);
     }
-    LOG(INFO) << "mid verify end";
   }
 
  private:
@@ -962,7 +896,6 @@ class QwenImageMidBlockImpl : public torch::nn::Module {
 
 TORCH_MODULE(QwenImageMidBlock);
 
-// QwenImageEncoder3d - 3D编码器
 class QwenImageEncoder3dImpl : public torch::nn::Module {
  public:
   QwenImageEncoder3dImpl(const ModelContext& context,
@@ -982,10 +915,8 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
         num_res_blocks(num_res_blocks),
         attn_scales(attn_scales),
         temperal_downsample(temperal_downsample) {
-    // 激活函数
     nonlinearity = register_module("silu", torch::nn::SiLU());
 
-    // 计算维度
     std::vector<int64_t> dims = {dim * 1};
     for (auto u : dim_mult) {
       dims.push_back(dim * u);
@@ -993,7 +924,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
 
     double scale = 1.0;
 
-    // 输入卷积
     conv_in =
         register_module("conv_in",
                         QwenImageCausalConv3d(context,
@@ -1003,7 +933,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
                                               torch::IntArrayRef{1, 1, 1},
                                               torch::IntArrayRef{1, 1, 1}));
 
-    // 下采样块
     down_blocks = register_module("down_blocks", torch::nn::ModuleList());
 
     size_t counter = 0;
@@ -1011,7 +940,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
       int64_t in_dim = dims[i];
       int64_t out_dim = dims[i + 1];
 
-      // 残差块和注意力块
       for (int64_t j = 0; j < num_res_blocks; j++) {
         auto res_block = QwenImageResidualBlock(
             context, in_dim, out_dim, dropout, non_linearity);
@@ -1029,7 +957,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
         in_dim = out_dim;
       }
 
-      // 下采样块
       if (i != dim_mult.size() - 1) {
         std::string mode =
             temperal_downsample[i] ? "downsample3d" : "downsample2d";
@@ -1041,12 +968,10 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
       }
     }
 
-    // 中间块
     mid_block = register_module(
         "mid_block",
         QwenImageMidBlock(context, dims.back(), dropout, non_linearity, 1));
 
-    // 输出块
     norm_out = register_module(
         "norm_out",
         QwenImageRMS_norm(context, dims.back(), true, false, false, false));
@@ -1065,7 +990,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
                         std::vector<int64_t>* feat_idx = {0}) {
     torch::Tensor result_x;
 
-    // 输入卷积
     if (feat_cache && feat_idx) {
       auto idx = (*feat_idx)[0];
       auto cache_x =
@@ -1084,22 +1008,16 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
                 .to(cache_x.device());
         cache_x = torch::cat({last_frame, cache_x}, 2);
       }
-      LOG(INFO) << "before conv_in 1";
       result_x = conv_in->forward(x, feat_cache->at(idx));
-      torch::save(result_x, "conv1.pt");
       feat_cache->at(idx) = cache_x;
       (*feat_idx)[0]++;
     } else {
-      LOG(INFO) << "before conv_in 2";
       result_x = conv_in->forward(x);
     }
 
-    // 下采样块
     int64_t counter = 0;
     for (auto& layer : *down_blocks) {
       if (feat_cache) {
-        LOG(INFO) << "inside for loop";
-        LOG(INFO) << counter;
         counter = counter + 1;
         result_x =
             std::dynamic_pointer_cast<QwenImageBaseModule>(layer)->forward(
@@ -1113,12 +1031,9 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
                     .get());
       }
     }
-    torch::save(result_x, "down1.pt");
 
-    // 中间块
     result_x = mid_block->forward(result_x, feat_cache, feat_idx);
 
-    // 输出头
     result_x = norm_out->forward(result_x);
     result_x = nonlinearity->forward(result_x);
 
@@ -1154,14 +1069,8 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    LOG(INFO) << "encoder start";
-    for (auto it = state_dict.begin(); it != state_dict.end(); ++it) {
-      LOG(INFO) << "keys are " << it->first;
-    }
-    LOG(INFO) << "encoder end";
     conv_in->load_state_dict(state_dict.get_dict_with_prefix("conv_in."));
 
-    // 加载下采样块权重
     for (size_t resnet_idx : resnet_blocks_idx) {
       down_blocks[resnet_idx]->as<QwenImageResidualBlock>()->load_state_dict(
           state_dict.get_dict_with_prefix("down_blocks." +
@@ -1187,7 +1096,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
   }
 
   void verify_loaded_weights(const std::string& prefix) {
-    LOG(INFO) << "encoder verify start";
     conv_in->verify_loaded_weights("conv_in.");
     for (size_t resnet_idx : resnet_blocks_idx) {
       down_blocks[resnet_idx]
@@ -1208,7 +1116,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
     mid_block->verify_loaded_weights("mid_block.");
     norm_out->verify_loaded_weights("norm_out.");
     conv_out->verify_loaded_weights("conv_out.");
-    LOG(INFO) << "encoder verify end";
   }
 
  private:
@@ -1231,7 +1138,6 @@ class QwenImageEncoder3dImpl : public torch::nn::Module {
 
 TORCH_MODULE(QwenImageEncoder3d);
 
-// QwenImageUpBlock - 上采样块
 class QwenImageUpBlockImpl : public torch::nn::Module {
  public:
   QwenImageUpBlockImpl(const ModelContext& context,
@@ -1242,7 +1148,6 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
                        const std::string& upsample_mode = "",
                        const std::string& non_linearity = "silu")
       : in_dim(in_dim), out_dim(out_dim) {
-    // 创建残差块
     resnets = register_module("resnets", torch::nn::ModuleList());
     int64_t current_dim = in_dim;
 
@@ -1253,7 +1158,6 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
       current_dim = out_dim;
     }
 
-    // 添加上采样层
     if (!upsample_mode.empty()) {
       upsamplers = register_module("upsamplers", torch::nn::ModuleList());
       auto upsample = QwenImageResample(context, out_dim, upsample_mode);
@@ -1266,7 +1170,6 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
                         std::vector<int64_t>* feat_idx = {0}) {
     auto result_x = x;
 
-    // 残差块
     for (auto& resnet : *resnets) {
       if (feat_cache && feat_idx) {
         result_x =
@@ -1282,7 +1185,6 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
       }
     }
 
-    // 上采样
     if (upsamplers) {
       if (feat_cache && feat_idx) {
         result_x = std::dynamic_pointer_cast<QwenImageBaseModule>(upsamplers[0])
@@ -1301,14 +1203,12 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
-    // 加载残差块权重
     for (size_t i = 0; i < resnets->size(); i++) {
       auto prefix = "resnets." + std::to_string(i) + ".";
       resnets[i]->as<QwenImageResidualBlock>()->load_state_dict(
           state_dict.get_dict_with_prefix(prefix));
     }
 
-    // 加载上采样器权重
     if (upsamplers) {
       upsamplers[0]->as<QwenImageResample>()->load_state_dict(
           state_dict.get_dict_with_prefix("upsamplers.0."));
@@ -1316,7 +1216,6 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
   }
 
   void verify_loaded_weights(const std::string& prefix) {
-    LOG(INFO) << "image up verify start";
     for (size_t i = 0; i < resnets->size(); i++) {
       auto prefix = "resnets." + std::to_string(i) + ".";
       resnets[i]->as<QwenImageResidualBlock>()->verify_loaded_weights(prefix);
@@ -1326,7 +1225,6 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
       upsamplers[0]->as<QwenImageResample>()->verify_loaded_weights(
           "upsamplers.0.");
     }
-    LOG(INFO) << "image up verify end";
   }
 
  private:
@@ -1337,7 +1235,6 @@ class QwenImageUpBlockImpl : public torch::nn::Module {
 
 TORCH_MODULE(QwenImageUpBlock);
 
-// QwenImageDecoder3d - 3D解码器
 class QwenImageDecoder3dImpl : public torch::nn::Module {
  public:
   QwenImageDecoder3dImpl(const ModelContext& context,
@@ -1357,21 +1254,15 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
         num_res_blocks(num_res_blocks),
         attn_scales(attn_scales),
         temperal_upsample(temperal_upsample) {
-    // 激活函数
     nonlinearity = register_module("silu", torch::nn::SiLU());
 
-    // 计算维度
     std::vector<int64_t> dims = {dim * dim_mult.back()};
     for (int64_t i = dim_mult.size() - 1; i >= 0; i--) {
       dims.push_back(dim * dim_mult.at(i));
     }
-    for (auto dimo : dims) {
-      LOG(INFO) << "dim is hhh " << dimo;
-    }
 
     double scale = 1.0 / std::pow(2, dim_mult.size() - 2);
 
-    // 输入卷积
     conv_in =
         register_module("conv_in",
                         QwenImageCausalConv3d(context,
@@ -1381,12 +1272,10 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
                                               torch::IntArrayRef{1, 1, 1},
                                               torch::IntArrayRef{1, 1, 1}));
 
-    // 中间块
     mid_block = register_module(
         "mid_block",
         QwenImageMidBlock(context, dims[0], dropout, non_linearity, 1));
 
-    // 上采样块
     up_blocks = register_module("up_blocks", torch::nn::ModuleList());
     for (size_t i = 0; i < dims.size() - 1; i++) {
       int64_t in_dim = dims[i];
@@ -1396,13 +1285,11 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
         in_dim = in_dim / 2;
       }
 
-      // 确定上采样模式
       std::string upsample_mode;
       if (i != dim_mult.size() - 1) {
         upsample_mode = temperal_upsample[i] ? "upsample3d" : "upsample2d";
       }
 
-      // 创建上采样块
       auto up_block = QwenImageUpBlock(context,
                                        in_dim,
                                        out_dim,
@@ -1412,13 +1299,11 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
                                        non_linearity);
       up_blocks->push_back(up_block);
 
-      // 更新尺度
       if (!upsample_mode.empty()) {
         scale *= 2.0;
       }
     }
-    LOG(INFO) << "out dim norm is hhh " << dims.back();
-    // 输出块
+
     norm_out = register_module(
         "norm_out",
         QwenImageRMS_norm(context, dims.back(), true, false, false, false));
@@ -1437,7 +1322,6 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
                         std::vector<int64_t>* feat_idx = {0}) {
     auto result_x = x;
 
-    // 输入卷积
     if (feat_cache) {
       auto idx = (*feat_idx)[0];
       auto cache_x =
@@ -1465,19 +1349,16 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
       result_x = conv_in->forward(result_x);
     }
 
-    // 中间块
     result_x = mid_block->forward(result_x, feat_cache, feat_idx);
 
-    // 上采样块
     for (auto& up_block : *up_blocks) {
       result_x = up_block->as<QwenImageUpBlock>()->forward(
           result_x, feat_cache, feat_idx);
     }
-    LOG(INFO) << "finish up blocks";
-    // 输出头
+
     result_x = norm_out->forward(result_x);
     result_x = nonlinearity->forward(result_x);
-    LOG(INFO) << "after nonlinearty";
+
     if (feat_cache) {
       auto idx = (*feat_idx)[0];
       auto cache_x =
@@ -1505,7 +1386,6 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
     } else {
       result_x = conv_out->forward(result_x);
     }
-    LOG(INFO) << "after conv out";
     return result_x;
   }
 
@@ -1513,7 +1393,6 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
     conv_in->load_state_dict(state_dict.get_dict_with_prefix("conv_in."));
     mid_block->load_state_dict(state_dict.get_dict_with_prefix("mid_block."));
 
-    // 加载上采样块权重
     for (size_t i = 0; i < up_blocks->size(); i++) {
       auto prefix = "up_blocks." + std::to_string(i) + ".";
       up_blocks[i]->as<QwenImageUpBlock>()->load_state_dict(
@@ -1525,21 +1404,16 @@ class QwenImageDecoder3dImpl : public torch::nn::Module {
   }
 
   void verify_loaded_weights(const std::string& prefix) {
-    LOG(INFO) << "decoder verify start";
     conv_in->verify_loaded_weights("conv_in.");
 
     mid_block->verify_loaded_weights("mid_block.");
-    LOG(INFO) << "size is" << up_blocks->size();
     for (size_t i = 0; i < up_blocks->size(); i++) {
       auto prefix = "up_blocks." + std::to_string(i) + ".";
-      LOG(INFO) << "block i infer" << i;
       up_blocks[i]->as<QwenImageUpBlock>()->verify_loaded_weights(prefix);
     }
-    LOG(INFO) << "begin norm out";
 
     norm_out->verify_loaded_weights("norm_out.");
     conv_out->verify_loaded_weights("conv_out.");
-    LOG(INFO) << "decoder verify end";
   }
 
   std::vector<std::shared_ptr<Module>> get_modules() const {
@@ -1636,7 +1510,6 @@ class DiagonalGaussianDistribution {
   bool deterministic_;
 };
 
-// �~S�~G��~S�~^~D�~S�~Z�~I
 struct AutoencoderKLOutput {
   DiagonalGaussianDistribution latent_dist;
   AutoencoderKLOutput(DiagonalGaussianDistribution dist)
@@ -1648,60 +1521,8 @@ struct DecoderOutput {
   DecoderOutput(torch::Tensor sample) : sample(std::move(sample)) {}
 };
 
-// AutoencoderKLQwenImage - KL自动编码器
 class AutoencoderKLQwenImageImpl : public torch::nn::Module {
  public:
-  /*
-  AutoencoderKLQwenImageImpl(const ModelContext& context,
-                             int64_t base_dim = 96,
-                             int64_t z_dim = 16,
-                             std::vector<int64_t> dim_mult = {1, 2, 4, 4},
-                             int64_t num_res_blocks = 2,
-                             std::vector<double> attn_scales = {},
-                             std::vector<bool> temperal_downsample = {false,
-                                                                      true,
-                                                                      true},
-                             double dropout = 0.0,
-                             std::vector<double> latents_mean = {-0.7571,
-                                                                 -0.7089,
-                                                                 -0.9113,
-                                                                 0.1075,
-                                                                 -0.1745,
-                                                                 0.9653,
-                                                                 -0.1517,
-                                                                 1.5508,
-                                                                 0.4134,
-                                                                 -0.0715,
-                                                                 0.5517,
-                                                                 -0.3632,
-                                                                 -0.1922,
-                                                                 -0.9497,
-                                                                 0.2503,
-                                                                 -0.2921},
-                             std::vector<double> latents_std = {2.8184,
-                                                                1.4541,
-                                                                2.3275,
-                                                                2.6558,
-                                                                1.2196,
-                                                                1.7708,
-                                                                2.6052,
-                                                                2.0743,
-                                                                3.2687,
-                                                                2.1526,
-                                                                2.8652,
-                                                                1.5579,
-                                                                1.6382,
-                                                                1.1253,
-                                                                2.8251,
-                                                                1.9160})
-      : z_dim(z_dim),
-        temperal_downsample(temperal_downsample),
-        base_dim(base_dim),
-        dim_mult(dim_mult),
-        num_res_blocks(num_res_blocks),
-        attn_scales(attn_scales),
-        dropout(dropout) {
-    */
   AutoencoderKLQwenImageImpl(const ModelContext& context)
       : args_(context.get_model_args()),
         z_dim(context.get_model_args().z_dim()),
@@ -1711,15 +1532,9 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
         num_res_blocks(context.get_model_args().num_res_blocks()),
         attn_scales(context.get_model_args().attn_scales()),
         dropout(context.get_model_args().dropout()) {
-    LOG(INFO) << "print dim mult";
-    for (auto dims : dim_mult) {
-      LOG(INFO) << dims;
-    }
-    // 反转时间下采样用于上采样
     temperal_upsample = std::vector<bool>(temperal_downsample.rbegin(),
                                           temperal_downsample.rend());
 
-    // 编码器
     encoder = register_module("encoder",
                               QwenImageEncoder3d(context,
                                                  base_dim,
@@ -1730,7 +1545,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
                                                  temperal_downsample,
                                                  dropout));
 
-    // 量化卷积
     quant_conv =
         register_module("quant_conv",
                         QwenImageCausalConv3d(context,
@@ -1740,7 +1554,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
                                               torch::IntArrayRef{1, 1, 1},
                                               torch::IntArrayRef{0, 0, 0}));
 
-    // 后量化卷积
     post_quant_conv =
         register_module("post_quant_conv",
                         QwenImageCausalConv3d(context,
@@ -1750,7 +1563,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
                                               torch::IntArrayRef{1, 1, 1},
                                               torch::IntArrayRef{0, 0, 0}));
 
-    // 解码器
     decoder = register_module("decoder",
                               QwenImageDecoder3d(context,
                                                  base_dim,
@@ -1761,26 +1573,20 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
                                                  temperal_upsample,
                                                  dropout));
 
-    // 空间压缩比率
     spatial_compression_ratio =
         static_cast<int64_t>(std::pow(2, temperal_downsample.size()));
 
-    // 切片和分块设置
     use_slicing = false;
     use_tiling = false;
     tile_sample_min_height = 256;
     tile_sample_min_width = 256;
     tile_sample_stride_height = 192;
     tile_sample_stride_width = 192;
-    LOG(INFO) << "executed before";
 
-    // 预计算卷积计数
     cached_conv_counts = {{"decoder", count_conv3d_modules(*decoder)},
                           {"encoder", count_conv3d_modules(*encoder)}};
-    LOG(INFO) << "executed after";
   }
 
-  // 启用分块
   void enable_tiling(int64_t tile_sample_min_height = -1,
                      int64_t tile_sample_min_width = -1,
                      int64_t tile_sample_stride_height = -1,
@@ -1796,7 +1602,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
       this->tile_sample_stride_width = tile_sample_stride_width;
   }
 
-  // 清空缓存
   void clear_cache() {
     conv_num = count_conv3d_modules(*decoder);
     conv_idx = {0};
@@ -1808,7 +1613,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     enc_feat_map = std::vector<torch::Tensor>(enc_conv_num);
   }
 
-  // 内部编码方法
   torch::Tensor _encode(const torch::Tensor& x) {
     auto sizes = x.sizes();
     auto b = sizes[0], c = sizes[1], num_frame = sizes[2], height = sizes[3],
@@ -1840,9 +1644,9 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
                         torch::indexing::Slice(),
                         torch::indexing::Slice()});
       }
-      LOG(INFO) << "before encoder forward";
+
       auto encoded_tile = encoder->forward(tile, &enc_feat_map, &enc_conv_idx);
-      LOG(INFO) << "after encoder forward";
+
       if (i == 0) {
         out = encoded_tile;
       } else {
@@ -1855,7 +1659,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return enc;
   }
 
-  // 编码方法
   AutoencoderKLOutput encode(const torch::Tensor& x, bool return_dict = true) {
     torch::Tensor h;
 
@@ -1869,10 +1672,9 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     } else {
       h = _encode(x);
     }
-    LOG(INFO) << "outside encoder now";
-    // 这里需要实现 DiagonalGaussianDistribution
+
     auto posterior = DiagonalGaussianDistribution(h);
-    LOG(INFO) << "outside posterior";
+
     if (!return_dict) {
       return {posterior};
     }
@@ -1881,7 +1683,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return output;
   }
 
-  // 内部解码方法
   DecoderOutput _decode(const torch::Tensor& z, bool return_dict = true) {
     auto sizes = z.sizes();
     auto b = sizes[0], c = sizes[1], num_frame = sizes[2], height = sizes[3],
@@ -1900,7 +1701,7 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     clear_cache();
     auto x = post_quant_conv->forward(z);
     torch::Tensor out;
-    LOG(INFO) << "feat_map size is " << feat_map.size();
+
     for (int64_t i = 0; i < num_frame; i++) {
       conv_idx[0] = 0;
       auto frame = x.index({torch::indexing::Slice(),
@@ -1929,7 +1730,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return output;
   }
 
-  // 解码方法
   DecoderOutput decode(const torch::Tensor& z, bool return_dict = true) {
     torch::Tensor decoded;
 
@@ -1954,7 +1754,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return output;
   }
 
-  // 垂直混合
   torch::Tensor blend_v(const torch::Tensor& a,
                         const torch::Tensor& b,
                         int64_t blend_extent) {
@@ -1990,7 +1789,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return result_b;
   }
 
-  // 水平混合
   torch::Tensor blend_h(const torch::Tensor& a,
                         const torch::Tensor& b,
                         int64_t blend_extent) {
@@ -2026,7 +1824,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return result_b;
   }
 
-  // 分块编码
   torch::Tensor tiled_encode(const torch::Tensor& x) {
     auto sizes = x.sizes();
     auto b = sizes[0], c = sizes[1], num_frames = sizes[2], height = sizes[3],
@@ -2047,7 +1844,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     auto blend_height = tile_latent_min_height - tile_latent_stride_height;
     auto blend_width = tile_latent_min_width - tile_latent_stride_width;
 
-    // 分割x为重叠的块并分别编码
     std::vector<std::vector<torch::Tensor>> rows;
 
     for (int64_t i = 0; i < height; i += tile_sample_stride_height) {
@@ -2090,7 +1886,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     }
     clear_cache();
 
-    // 混合并组合结果
     std::vector<torch::Tensor> result_rows;
 
     for (int64_t i = 0; i < static_cast<int64_t>(rows.size()); i++) {
@@ -2099,7 +1894,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
       for (int64_t j = 0; j < static_cast<int64_t>(rows[i].size()); j++) {
         auto tile = rows[i][j];
 
-        // 混合上方和左侧的块
         if (i > 0) {
           tile = blend_v(rows[i - 1][j], tile, blend_height);
         }
@@ -2128,7 +1922,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return enc;
   }
 
-  // 分块解码
   DecoderOutput tiled_decode(const torch::Tensor& z, bool return_dict = true) {
     auto sizes = z.sizes();
     auto b = sizes[0], c = sizes[1], num_frames = sizes[2], height = sizes[3],
@@ -2149,7 +1942,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     auto blend_height = tile_sample_min_height - tile_sample_stride_height;
     auto blend_width = tile_sample_min_width - tile_sample_stride_width;
 
-    // 分割z为重叠的块并分别解码
     std::vector<std::vector<torch::Tensor>> rows;
 
     for (int64_t i = 0; i < height; i += tile_latent_stride_height) {
@@ -2180,7 +1972,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     }
     clear_cache();
 
-    // 混合并组合结果
     std::vector<torch::Tensor> result_rows;
 
     for (int64_t i = 0; i < static_cast<int64_t>(rows.size()); i++) {
@@ -2189,7 +1980,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
       for (int64_t j = 0; j < static_cast<int64_t>(rows[i].size()); j++) {
         auto tile = rows[i][j];
 
-        // 混合上方和左侧的块
         if (i > 0) {
           tile = blend_v(rows[i - 1][j], tile, blend_height);
         }
@@ -2222,14 +2012,12 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
     return output;
   }
 
-  // 前向传播
   DecoderOutput forward(const torch::Tensor& sample,
                         bool sample_posterior = false,
                         bool return_dict = true,
                         int64_t seed = 42) {
     auto x = sample;
 
-    // 编码
     auto encode_output = encode(x, true);
     auto posterior = encode_output.latent_dist;
 
@@ -2240,7 +2028,6 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
       z = posterior.mode();
     }
 
-    // 解码
     auto dec = decode(z, return_dict);
     return dec;
   }
@@ -2263,46 +2050,28 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
           state_dict->get_dict_with_prefix("post_quant_conv."));
     }
     verify_loaded_weights("");
-    LOG(INFO) << "qwen image vae model loaded successfully.";
   }
 
   void verify_loaded_weights(const std::string& prefix) {
-    LOG(INFO) << "all verify start";
     encoder->verify_loaded_weights("encoder.");
     decoder->verify_loaded_weights("decoder.");
     quant_conv->verify_loaded_weights("quant_conv.");
     post_quant_conv->verify_loaded_weights("post_quant_conv.");
-    LOG(INFO) << "all verify end";
   }
 
  private:
-  /*
-  // 辅助函数：计算Conv3D模块数量
-  int64_t count_conv3d_modules(const torch::nn::Module module) {
-    int64_t count = 0;
-    for (auto& m : module.named_modules()) {
-      if (auto conv = dynamic_cast<QwenImageCausalConv3dImpl*>(m.value().get()))
-  { LOG(INFO) << m.key(); count++;
-      }
-    }
-    return count;
-  }
-  */
   template <typename ModuleType>
   int64_t count_conv3d_modules(const ModuleType& module) {
     int64_t count = 0;
     for (const auto& m : module.named_modules()) {
       if (auto conv =
               dynamic_cast<QwenImageCausalConv3dImpl*>(m.value().get())) {
-        LOG(INFO) << "contains : " << m.key();
         count++;
       }
     }
-    LOG(INFO) << "count is : " << count;
     return count;
   }
 
-  // 成员变量
   int64_t base_dim, z_dim;
   std::vector<int64_t> dim_mult;
   int64_t num_res_blocks;
@@ -2317,12 +2086,10 @@ class AutoencoderKLQwenImageImpl : public torch::nn::Module {
 
   std::unordered_map<std::string, int64_t> cached_conv_counts;
 
-  // 缓存相关
   int64_t conv_num, enc_conv_num;
   std::vector<int64_t> conv_idx, enc_conv_idx;
   std::vector<torch::Tensor> feat_map, enc_feat_map;
 
-  // 模块
   QwenImageEncoder3d encoder{nullptr};
   QwenImageCausalConv3d quant_conv{nullptr};
   QwenImageCausalConv3d post_quant_conv{nullptr};

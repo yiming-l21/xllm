@@ -34,11 +34,9 @@
 
 namespace xllm {
 namespace qwenimage {
-void print_tensor_shape(const torch::Tensor& test) {
-  for (auto size : test.sizes()) {
-    LOG(INFO) << size;
-  }
-}
+
+// TODO: This class should be extracted from dit class and integrated into a
+// common class.
 class RMSNormImpl : public torch::nn::Module {
  public:
   // Constructor: dim (normalization dimension), eps (stabilization term)
@@ -89,6 +87,8 @@ class RMSNormImpl : public torch::nn::Module {
 };
 TORCH_MODULE(RMSNorm);
 
+// TODO: This class should be extracted from dit class and integrated into a
+// common class.
 class AdaLayerNormContinuousImpl : public torch::nn::Module {
  public:
   explicit AdaLayerNormContinuousImpl(const ModelContext& context,
@@ -107,7 +107,7 @@ class AdaLayerNormContinuousImpl : public torch::nn::Module {
         "norm",
         torch::nn::LayerNorm(torch::nn::LayerNormOptions({embedding_dim})
                                  .elementwise_affine(false)
-                                 .eps(1e-6)));
+                                 .eps(eps)));
   }
 
   torch::Tensor forward(const torch::Tensor& x,
@@ -146,6 +146,8 @@ class AdaLayerNormContinuousImpl : public torch::nn::Module {
 };
 TORCH_MODULE(AdaLayerNormContinuous);
 
+// TODO: This class should be extracted from dit class and integrated into a
+// common class.
 class AdaLayerNormImpl : public torch::nn::Module {
  public:
   AdaLayerNormImpl(const ModelContext& contex,
@@ -163,12 +165,6 @@ class AdaLayerNormImpl : public torch::nn::Module {
 
     scale = (1 + scale.unsqueeze(1));
     shift = shift.unsqueeze(1);
-    // torch::save( shift, "shift.pt");
-    // torch::save( scale, "scale.pt");
-
-    // LOG(INFO) << eps_;
-    // LOG(INFO) << hidden_size_;
-    // torch::save( x, "x.pt");
 
     auto result = at_npu::native::custom_ops::npu_layer_norm_eval(
         x, {hidden_size_}, scale, shift, eps_);
@@ -236,7 +232,6 @@ class TimestepsImpl : public torch::nn::Module {
     auto emb = torch::exp(exponent);
     emb = timesteps.unsqueeze(1).to(torch::kFloat) * emb.unsqueeze(0);
 
-    // scale embeddings
     emb = scale * emb;
 
     // concat sine and cosine embeddings
@@ -264,6 +259,8 @@ class TimestepsImpl : public torch::nn::Module {
 };
 TORCH_MODULE(Timesteps);
 
+// TODO: a factory function that provides activation functions based on string
+// input
 std::function<torch::Tensor(const torch::Tensor&)> get_activation(
     const std::string& act_fn) {
   if (act_fn == "silu") {
@@ -417,10 +414,8 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
         static_cast<float>(dim);
     auto freqs = 1.0 / torch::pow(theta, exponents);
 
-    // 计算外积
     auto outer_result = torch::outer(index.to(torch::kFloat32), freqs);
 
-    // 创建复数张量 - 对应 torch.polar(torch.ones_like(freqs), freqs)
     auto complex_freqs =
         torch::polar(torch::ones_like(outer_result), outer_result);
 
@@ -433,7 +428,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
                                      int64_t idx = 0) {
     int64_t seq_lens = frame * height * width;
 
-    // 分割频率张量
     std::vector<int64_t> split_sizes;
     for (auto dim : axes_dim_) {
       split_sizes.push_back(dim / 2);
@@ -442,7 +436,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
     auto freqs_pos_chunks = pos_freqs_.split_with_sizes(split_sizes, 1);
     auto freqs_neg_chunks = neg_freqs_.split_with_sizes(split_sizes, 1);
 
-    // 帧频率
     auto freqs_frame = freqs_pos_chunks[0]
                            .slice(0, idx, idx + frame)
                            .view({frame, 1, 1, -1})
@@ -451,7 +444,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
     torch::Tensor freqs_height, freqs_width;
 
     if (scale_rope_) {
-      // 高度频率 - 拼接负频率和正频率
       auto height_neg_part = freqs_neg_chunks[1].slice(
           0, -(height - height / 2), torch::indexing::None);
       auto height_pos_part = freqs_pos_chunks[1].slice(0, 0, height / 2);
@@ -459,7 +451,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
                          .view({1, height, 1, -1})
                          .expand({frame, height, width, -1});
 
-      // 宽度频率 - 拼接负频率和正频率
       auto width_neg_part = freqs_neg_chunks[2].slice(
           0, -(width - width / 2), torch::indexing::None);
       auto width_pos_part = freqs_pos_chunks[2].slice(0, 0, width / 2);
@@ -467,7 +458,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
                         .view({1, 1, width, -1})
                         .expand({frame, height, width, -1});
     } else {
-      // 直接使用正频率
       freqs_height = freqs_pos_chunks[1]
                          .slice(0, 0, height)
                          .view({1, height, 1, -1})
@@ -479,7 +469,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
                         .expand({frame, height, width, -1});
     }
 
-    // 拼接所有频率
     auto freqs = torch::cat({freqs_frame, freqs_height, freqs_width}, -1)
                      .reshape({seq_lens, -1});
 
@@ -490,7 +479,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
       const std::vector<std::vector<int64_t>>& video_fhw,
       const torch::Tensor& txt_seq_lens,
       torch::Device device) {
-    // 确保频率张量在正确的设备上
     if (pos_freqs_.device() != device) {
       pos_freqs_ = pos_freqs_.to(device);
       neg_freqs_ = neg_freqs_.to(device);
@@ -507,7 +495,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
                              std::to_string(height) + "_" +
                              std::to_string(width);
 
-      // 计算视频频率（简化版本，没有缓存）
       auto video_freq = _compute_video_freqs(frame, height, width, idx);
       video_freq = video_freq.to(device);
       vid_freqs.push_back(video_freq);
@@ -519,15 +506,11 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
       }
     }
 
-    // 计算文本频率
     int64_t max_len = torch::max(txt_seq_lens).item<int64_t>();
     auto txt_freqs =
         pos_freqs_.slice(0, max_vid_index, max_vid_index + max_len);
 
-    // 合并视频频率
     auto vid_freqs_cat = torch::cat(vid_freqs, 0);
-    print_tensor_shape(vid_freqs_cat);
-    print_tensor_shape(txt_freqs);
     return std::make_tuple(vid_freqs_cat, txt_freqs);
   }
 
@@ -542,7 +525,6 @@ class QwenEmbedRopeImpl : public torch::nn::Module {
 
 TORCH_MODULE(QwenEmbedRope);
 
-// 缓存的实现（如果需要）
 class QwenEmbedRopeWithCacheImpl : public QwenEmbedRopeImpl {
  public:
   QwenEmbedRopeWithCacheImpl(const ModelContext& context,
@@ -573,6 +555,11 @@ class QwenEmbedRopeWithCacheImpl : public QwenEmbedRopeImpl {
 };
 TORCH_MODULE(QwenEmbedRopeWithCache);
 
+// A internel class that only register necessary modules for attention
+// implementation The attention forward shouldn't be implemented here, but in
+// processor classes
+// TODO: This class should be extracted from dit class and integrated into a
+// common class.
 class AttentionImpl : public torch::nn::Module {
  public:
   AttentionImpl(const ModelContext context,
@@ -784,6 +771,7 @@ class AttentionImpl : public torch::nn::Module {
 };
 TORCH_MODULE(Attention);
 
+// Implementation of attention forward
 class QwenDoubleStreamAttnProcessor2_0Impl : public torch::nn::Module {
  public:
   QwenDoubleStreamAttnProcessor2_0Impl(Attention&& attn_module) {
@@ -796,9 +784,6 @@ class QwenDoubleStreamAttnProcessor2_0Impl : public torch::nn::Module {
       const torch::Tensor& encoder_hidden_states_mask = torch::Tensor(),
       const torch::Tensor& attention_mask = torch::Tensor(),
       const std::tuple<at::Tensor, at::Tensor>& image_rotary_emb = {}) {
-    print_tensor_shape(hidden_states);
-    print_tensor_shape(encoder_hidden_states);
-
     int64_t seq_txt = encoder_hidden_states.size(1);
     int64_t seq_img = hidden_states.size(1);
     // Compute QKV for image stream (sample projections)
@@ -818,11 +803,9 @@ class QwenDoubleStreamAttnProcessor2_0Impl : public torch::nn::Module {
     img_query = img_query.unflatten(-1, reshape_dims);
     img_key = img_key.unflatten(-1, reshape_dims);
     img_value = img_value.unflatten(-1, reshape_dims);
-    print_tensor_shape(img_query);
     txt_query = txt_query.unflatten(-1, reshape_dims);
     txt_key = txt_key.unflatten(-1, reshape_dims);
     txt_value = txt_value.unflatten(-1, reshape_dims);
-    print_tensor_shape(txt_query);
     // Apply QK normalization
     if (attn_->norm_q_) {
       img_query = attn_->norm_q_->forward(img_query);
@@ -843,20 +826,13 @@ class QwenDoubleStreamAttnProcessor2_0Impl : public torch::nn::Module {
 
     img_query = apply_rotary_emb_qwen(img_query, img_freqs, false);
     img_key = apply_rotary_emb_qwen(img_key, img_freqs, false);
-    print_tensor_shape(img_query);
     txt_query = apply_rotary_emb_qwen(txt_query, txt_freqs, false);
     txt_key = apply_rotary_emb_qwen(txt_key, txt_freqs, false);
-    print_tensor_shape(txt_query);
 
     // Concatenate for joint attention - Order: [text, image]
     auto joint_query = torch::cat({txt_query, img_query}, 1);
     auto joint_key = torch::cat({txt_key, img_key}, 1);
     auto joint_value = torch::cat({txt_value, img_value}, 1);
-    /*
-    auto joint_hidden_states = attention_forward(
-        joint_query, joint_key, joint_value,
-        "manual", "fused_attn_score", "BNSD");
-    */
 
     auto results = at_npu::native::custom_ops::npu_fusion_attention(
         joint_query,
@@ -878,21 +854,14 @@ class QwenDoubleStreamAttnProcessor2_0Impl : public torch::nn::Module {
     joint_hidden_states = joint_hidden_states.to(joint_query.dtype());
 
     // Split attention outputs back
-    // auto txt_attn_output = joint_hidden_states.slice(1, 0, seq_txt);  // Text
-    // part auto img_attn_output = joint_hidden_states.slice(1, seq_txt);     //
-    // Image part
     auto chunks = torch::split(joint_hidden_states, {seq_txt, seq_img}, 1);
     auto txt_attn_output = chunks[0];
     auto img_attn_output = chunks[1];
 
     // Apply output projections
-    print_tensor_shape(txt_attn_output);
-    print_tensor_shape(img_attn_output);
     img_attn_output = attn_->to_out_->forward(img_attn_output);
-    LOG(INFO) << "to_out";
 
     txt_attn_output = attn_->to_add_out_->forward(txt_attn_output);
-    LOG(INFO) << "to_add_out";
     return std::make_tuple(img_attn_output, txt_attn_output);
   }
 
@@ -981,7 +950,6 @@ class QwenImageTransformerBlockImpl : public torch::nn::Module {
 
     // Image normalization
     img_norm1_ = register_module("img_norm1", AdaLayerNorm(context, dim, eps));
-    LOG(INFO) << "2-1 here";
     // Attention module
     auto attn_ = Attention(context,
                            dim,
@@ -1004,16 +972,14 @@ class QwenImageTransformerBlockImpl : public torch::nn::Module {
                            dim,
                            -1,
                            1);
-    LOG(INFO) << "2-2 here";
     attn_processor_ = register_module(
         "attn_processor_", QwenDoubleStreamAttnProcessor2_0(std::move(attn_)));
-    LOG(INFO) << "2-3 here";
     // Image normalization 2
     img_norm2_ = register_module("img_norm2", AdaLayerNorm(context, dim, eps));
 
     // Image MLP
     img_mlp_ = register_module("img_mlp", FeedForward(context, dim, dim));
-    LOG(INFO) << "2-4 here";
+
     // Text processing modules
     txt_mod_ =
         register_module("txt_mod",
@@ -1025,7 +991,7 @@ class QwenImageTransformerBlockImpl : public torch::nn::Module {
 
     // Text normalization 2
     txt_norm2_ = register_module("txt_norm2", AdaLayerNorm(context, dim, eps));
-    LOG(INFO) << "2-5 here";
+
     // Text MLP
     txt_mlp_ = register_module("txt_mlp", FeedForward(context, dim, dim));
   }
@@ -1050,13 +1016,9 @@ class QwenImageTransformerBlockImpl : public torch::nn::Module {
       const std::tuple<torch::Tensor, torch::Tensor>& image_rotary_emb = {},
       const std::unordered_map<std::string, torch::Tensor>&
           joint_attention_kwargs = {}) {
-    print_tensor_shape(hidden_states);
-    print_tensor_shape(encoder_hidden_states);
-    print_tensor_shape(temb);
     // Get modulation parameters for both streams
     auto img_mod_params = img_mod_->forward(temb);  // [B, 6*dim]
     auto txt_mod_params = txt_mod_->forward(temb);  // [B, 6*dim]
-    // torch::save(img_mod_params, "mod_param1.pt");
     //  Split modulation parameters for norm1 and norm2
     auto img_mod_chunks = img_mod_params.chunk(2, -1);
     auto img_mod1 = img_mod_chunks[0];  // [B, 3*dim]
@@ -1070,21 +1032,11 @@ class QwenImageTransformerBlockImpl : public torch::nn::Module {
     torch::Tensor img_modulated, img_gate1;
     std::tie(img_modulated, img_gate1) =
         img_norm1_->forward(hidden_states, img_mod1);
-    // torch::save(img_modulated, "modulate1.pt");
-    // torch::save(img_gate1, "gate1.pt");
-    // std::exit(0);
+
     //  Process text stream - norm1 + modulation
     torch::Tensor txt_modulated, txt_gate1;
     std::tie(txt_modulated, txt_gate1) =
         txt_norm1_->forward(encoder_hidden_states, txt_mod1);
-
-    // auto tensor_dict =
-    // StateDictFromSafeTensor::load("/export/home/shanchenfeng/xllm_build/xllm_qwenimage/xllm/xllm/attn_in.safetensors");
-    // bool weight_loaded = false;
-    // bool weight_loaded2 = false;
-    // weight::load_weight(*tensor_dict, "img_modulated", img_modulated,
-    // weight_loaded); weight::load_weight(*tensor_dict, "txt_modulated",
-    // txt_modulated, weight_loaded2);
 
     // Use QwenAttnProcessor2_0 for joint attention computation
     auto attn_output = attn_processor_->forward(img_modulated,  // Image stream
@@ -1096,14 +1048,12 @@ class QwenImageTransformerBlockImpl : public torch::nn::Module {
     // QwenAttnProcessor2_0 returns (img_output, txt_output)
     auto img_attn_output = std::get<0>(attn_output);
     auto txt_attn_output = std::get<1>(attn_output);
-    // torch::save(img_attn_output, "img_attn_output.pt");
-    // torch::save(txt_attn_output, "txt_attn_output.pt");
+
     //  Apply attention gates and add residual
     auto new_hidden_states = hidden_states + img_gate1 * img_attn_output;
-    LOG(INFO) << "hidden 1";
     auto new_encoder_hidden_states =
         encoder_hidden_states + txt_gate1 * txt_attn_output;
-    LOG(INFO) << "encoder hidden 1";
+
     // Process image stream - norm2 + MLP
     torch::Tensor img_modulated2, img_gate2;
     std::tie(img_modulated2, img_gate2) =
@@ -1120,9 +1070,7 @@ class QwenImageTransformerBlockImpl : public torch::nn::Module {
     auto txt_mlp_output = txt_mlp_->forward(txt_modulated2);
     new_encoder_hidden_states =
         new_encoder_hidden_states + txt_gate2 * txt_mlp_output;
-    // torch::save(new_hidden_states, "new_hidden_states_0.pt");
-    // torch::save(new_encoder_hidden_states, "new_encoder_hidden_states_0.pt");
-    // std::exit(0);
+
     //  Clip to prevent overflow for fp16
     if (new_encoder_hidden_states.dtype() == torch::kFloat16) {
       new_encoder_hidden_states =
@@ -1184,7 +1132,7 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
 
     out_channels = (out_channels > 0) ? out_channels : in_channels;
     auto inner_dim = num_attention_heads * attention_head_dim;
-    LOG(INFO) << "1 here";
+
     // Positional embedding
     pos_embed_ = register_module(
         "pos_embed", QwenEmbedRope(context, 10000, axes_dims_rope, true));
@@ -1192,7 +1140,7 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
     // Time-text embedding
     time_text_embed_ = register_module(
         "time_text_embed", QwenTimestepProjEmbeddings(context, inner_dim));
-    LOG(INFO) << "2 here";
+
     // Text normalization
     txt_norm_ = register_module(
         "txt_norm", RMSNorm(joint_attention_dim, 1e-6, true, false));
@@ -1202,7 +1150,6 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
         register_module("img_in", DiTLinear(in_channels, inner_dim, true));
     txt_in_ = register_module("txt_in",
                               DiTLinear(joint_attention_dim, inner_dim, true));
-    LOG(INFO) << "3 here";
     // Transformer blocks
     transformer_blocks_ =
         register_module("transformer_blocks", torch::nn::ModuleList());
@@ -1210,7 +1157,7 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
       transformer_blocks_->push_back(QwenImageTransformerBlock(
           context, inner_dim, num_attention_heads, attention_head_dim));
     }
-    LOG(INFO) << "4 here";
+
     // Output layers
     norm_out_ = register_module(
         "norm_out",
@@ -1219,7 +1166,6 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
         "proj_out",
         DiTLinear(inner_dim, patch_size * patch_size * out_channels, true));
 
-    LOG(INFO) << "5 here";
     // Cache for conditional and unconditional
     cache_cond_ = false;
     cache_uncond_ = false;
@@ -1238,29 +1184,16 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
       bool return_dict = true,
       bool use_cache = false,
       bool if_cond = true) {
-    print_tensor_shape(hidden_states);
-    print_tensor_shape(encoder_hidden_states);
-    print_tensor_shape(timestep);
-    print_tensor_shape(txt_seq_lens);
-
     auto new_hidden_states = img_in_->forward(hidden_states);
-    // torch::save(new_hidden_states, "new_hidden_states.pt");
-    // torch::save(hidden_states, "ori_hidden_states.pt");
     auto new_timestep = timestep.to(new_hidden_states.dtype());
-    // std::cout << new_timestep;
     auto new_encoder_hidden_states = txt_norm_->forward(encoder_hidden_states);
-    // torch::save(new_encoder_hidden_states, "encoder_hidden_states.pt");
     new_encoder_hidden_states = txt_in_->forward(new_encoder_hidden_states);
-    // torch::save(new_encoder_hidden_states, "encoder_hidden_states.pt");
     auto temb = time_text_embed_->forward(new_timestep, new_hidden_states);
-    // torch::save(temb, "temb.pt");
-    // std::exit(0);
     auto image_rotary_emb = pos_embed_->forward(
         img_shapes, txt_seq_lens, new_hidden_states.device());
     auto image_rot = std::get<0>(image_rotary_emb);
     auto txt_rot = std::get<1>(image_rotary_emb);
-    // torch::save(image_rot, "image_rot.pt");
-    // torch::save(txt_rot, "txt_rot.pt");
+
     for (int64_t index_block = 0; index_block < transformer_blocks_->size();
          ++index_block) {
       std::tie(new_hidden_states, new_encoder_hidden_states) =
@@ -1297,17 +1230,16 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
 
   void load_model(std::unique_ptr<DiTFolderLoader> loader) {
     for (const auto& state_dict : loader->get_state_dicts()) {
-      LOG(INFO) << "fisrt";
       time_text_embed_->load_state_dict(
           state_dict->get_dict_with_prefix("time_text_embed."));
       txt_norm_->load_state_dict(state_dict->get_dict_with_prefix("txt_norm."));
-      LOG(INFO) << "secend";
+
       img_in_->load_state_dict(state_dict->get_dict_with_prefix("img_in."));
       txt_in_->load_state_dict(state_dict->get_dict_with_prefix("txt_in."));
-      LOG(INFO) << "third";
+
       norm_out_->load_state_dict(state_dict->get_dict_with_prefix("norm_out."));
       proj_out_->load_state_dict(state_dict->get_dict_with_prefix("proj_out."));
-      LOG(INFO) << "fouth";
+
       for (size_t i = 0; i < transformer_blocks_->size(); i++) {
         auto prefix = "transformer_blocks." + std::to_string(i) + ".";
         transformer_blocks_[i]
@@ -1316,7 +1248,6 @@ class QwenImageTransformer2DModelImpl : public torch::nn::Module {
       }
     }
     verify_loaded_weights("");
-    LOG(INFO) << "h";
     LOG(INFO) << "qwen image vae model loaded successfully.";
   }
 

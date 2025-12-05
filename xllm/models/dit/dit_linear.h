@@ -25,6 +25,7 @@ class DiTLinearImpl : public torch::nn::Module {
  public:
   DiTLinearImpl(int64_t in, int64_t out, bool with_bias = true) {
     if (with_bias) {
+      // the weight needs to be transposed when using addmm
       weight = register_parameter("weight", torch::empty({in, out}));
       bias = register_parameter("bias", torch::empty(out));
     } else {
@@ -34,6 +35,7 @@ class DiTLinearImpl : public torch::nn::Module {
   }
 
   torch::Tensor forward(const torch::Tensor& x) {
+    // use addmm when bias is provided
     if (bias.defined()) {
       auto sizes = x.sizes();
       if (sizes.size() == 3) {
@@ -50,6 +52,7 @@ class DiTLinearImpl : public torch::nn::Module {
   }
 
   void load_state_dict(const StateDict& state_dict) {
+    // an overloaded load_weight function was used to load transpoesd weights
     weight::load_weight(
         state_dict, "weight", weight, weight_is_loaded_, bias.defined());
     if (bias.defined()) {
