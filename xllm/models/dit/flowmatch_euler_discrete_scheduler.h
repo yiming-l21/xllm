@@ -42,7 +42,13 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
     max_shift_ = args_.max_shift(),
     base_image_seq_len_ = args_.base_image_seq_len();
     max_image_seq_len_ = args_.max_image_seq_len();
-    shift_terminal_ = std::nullopt;
+    // shift_terminal_ = static_cast<int64_t>(args_.shift_terminal()) == -1 ?
+    // std::nullopt : args_.shift_terminal();
+    if (static_cast<int64_t>(args_.shift_terminal()) == -1) {
+      shift_terminal_ = std::nullopt;
+    } else {
+      shift_terminal_ = args_.shift_terminal();
+    }
     time_shift_type_ = "exponential";
     std::vector<float> timesteps_vec(num_train_timesteps_);
     for (int i = 0; i < num_train_timesteps_; ++i) {
@@ -170,6 +176,7 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
 
     if (use_dynamic_shifting_) {
       sigmas_tensor = time_shift(mu.value(), 1.0f, sigmas_tensor);
+      std::cout << sigmas_tensor;
     } else {
       sigmas_tensor =
           shift_ * sigmas_tensor / (1.0f + (shift_ - 1.0f) * sigmas_tensor);
@@ -177,6 +184,7 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
 
     if (shift_terminal_.has_value()) {
       sigmas_tensor = stretch_shift_to_terminal(sigmas_tensor);
+      std::cout << "sigmas_tensor " << sigmas_tensor;
     }
 
     if (use_karras_sigmas_) {
@@ -188,6 +196,7 @@ class FlowMatchEulerDiscreteSchedulerImpl : public torch::nn::Module {
     sigmas_tensor = sigmas_tensor.to(device).to(torch::kFloat32);
     if (!is_timesteps_provided) {
       ts_tensor = sigmas_tensor * num_train_timesteps_;
+      std::cout << "timestep_tensor " << ts_tensor;
     } else {
       ts_tensor = ts_tensor.to(device).to(torch::kFloat32);
     }
@@ -385,6 +394,7 @@ TORCH_MODULE(FlowMatchEulerDiscreteScheduler);
 REGISTER_MODEL_ARGS(FlowMatchEulerDiscreteScheduler, [&] {
   LOAD_ARG_OR(num_train_timesteps, "num_train_timesteps", 1000);
   LOAD_ARG_OR(shift, "shift", 1);
+  LOAD_ARG_OR(shift_terminal, "shift_terminal", -1);
   LOAD_ARG_OR(use_dynamic_shifting, "use_dynamic_shifting", true);
   LOAD_ARG_OR(base_shift, "base_shift", 0.5f);
   LOAD_ARG_OR(max_shift, "max_shift", 1.15f);
