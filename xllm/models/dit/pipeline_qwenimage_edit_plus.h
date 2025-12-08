@@ -98,11 +98,15 @@ class QwenImageEditPlusPipelineImpl : public QwenImagePipelineBaseImpl {
                       int64_t max_sequence_length = 1024) {
     int64_t batch_size =
         prompt_embeds.defined() ? prompt_embeds.size(0) : prompt.size();
-
     if (!prompt_embeds.defined()) {
       std::tie(prompt_embeds, prompt_embeds_mask) =
           _get_qwen_prompt_embeds(prompt, image, options);
     }
+
+    CHECK(prompt_embeds.defined())
+        << "currently, the prompt input is not supported for qwen image, "
+        << "expected a valid prompt_embeds input, but got empty tensor ";
+
     auto seq_len = prompt_embeds.size(1);
     prompt_embeds = prompt_embeds.repeat({1, num_images_per_prompt, 1});
     prompt_embeds =
@@ -184,7 +188,7 @@ class QwenImageEditPlusPipelineImpl : public QwenImagePipelineBaseImpl {
     return image_latents;
   }
 
-  std::pair<torch::Tensor, torch::Tensor> prepare_latents(
+  std::pair<torch::Tensor, torch::Tensor> _prepare_latents(
       const std::vector<torch::Tensor>& images,
       int64_t batch_size,
       int64_t num_channels_latents,
@@ -255,13 +259,31 @@ class QwenImageEditPlusPipelineImpl : public QwenImagePipelineBaseImpl {
     auto negative_prompts_2 = input.negative_prompts_2;
 
     auto latents = input.latents;
+    if (latents.defined()) {
+      latents = latents.to(options_.device(), dtype_);
+    }
+
     auto prompt_embeds = input.prompt_embeds;
+    if (prompt_embeds.defined()) {
+      prompt_embeds = prompt_embeds.to(options_.device(), dtype_);
+    }
     auto pooled_prompt_embeds = input.pooled_prompt_embeds;
     torch::Tensor prompt_embeds_mask;
 
     auto negative_prompt_embeds = input.negative_prompt_embeds;
+    if (negative_prompt_embeds.defined()) {
+      negative_prompt_embeds =
+          negative_prompt_embeds.to(options_.device(), dtype_);
+    }
     auto negative_pooled_prompt_embeds = input.negative_pooled_prompt_embeds;
     torch::Tensor negative_prompt_embeds_mask;
+
+    CHECK(input.images.defined())
+        << "expected image inputs, but got an empty tensor";
+
+    CHECK(input.images.dim() == 4)
+        << "image inputs are expected to be a 4 dim tensor, but got: "
+        << input.images.dim() << "s tensor";
 
     auto images = input.images.to(options_.device(), dtype_);
     double height_size = images.size(2);
@@ -282,7 +304,6 @@ class QwenImageEditPlusPipelineImpl : public QwenImagePipelineBaseImpl {
     current_timestep_ = torch::Tensor();
 
     int64_t batch_size = prompts.size();
-
     std::vector<torch::Tensor> condition_images;
     std::vector<torch::Tensor> vae_images;
     std::vector<std::pair<int64_t, int64_t>> condition_image_sizes;
@@ -313,7 +334,6 @@ class QwenImageEditPlusPipelineImpl : public QwenImagePipelineBaseImpl {
     bool has_neg_prompt = negative_prompts.size() > 0;
 
     bool do_true_cfg = (true_cfg_scale > 1.0) && has_neg_prompt;
-
     // inplace update prompt_embeds and prompt_embeds_mask
     _encode_prompt(condition_images,
                    prompts,
@@ -339,14 +359,14 @@ class QwenImageEditPlusPipelineImpl : public QwenImagePipelineBaseImpl {
     torch::Tensor image_latents;
 
     std::tie(final_latents, image_latents) =
-        prepare_latents(vae_images,
-                        batch_size * num_images_per_prompt,
-                        num_channels_latents,
-                        height,
-                        width,
-                        options_,
-                        42,
-                        latents);
+        _prepare_latents(vae_images,
+                         batch_size * num_images_per_prompt,
+                         num_channels_latents,
+                         height,
+                         width,
+                         options_,
+                         42,
+                         latents);
 
     std::vector<std::vector<int64_t>> main_shape = {
         {1, height / vae_scale_factor_ / 2, width / vae_scale_factor_ / 2}};
