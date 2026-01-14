@@ -340,7 +340,7 @@ class AttentionImpl : public torch::nn::Module {
     );
     hidden_states = hidden_states.transpose(1, 2).reshape(
         {batch_size, -1, num_heads_ * head_dim});
-    hidden_states = hidden_states.to(query.dtype());
+    hidden_states = hidden_states.to(query.dtype(), true);
     hidden_states = to_out_(hidden_states);
     // alignment right
     if (input_ndim == 4) {

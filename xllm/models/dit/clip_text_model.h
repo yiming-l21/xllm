@@ -291,36 +291,33 @@ class CLIPAttentionImpl : public torch::nn::Module {
   }
 
   torch::Tensor forward(const torch::Tensor& hidden_states,
-                        torch::Tensor causal_mask) {
-    auto bsz = hidden_states.size(0);
-    auto tgt_len = hidden_states.size(1);
+                        torch::Tensor attn_mask) {
+    auto batch_size = hidden_states.size(0);
+    auto seq_len = hidden_states.size(1);
 
-    auto query_states = q_proj_(hidden_states);
-    auto key_states = k_proj_(hidden_states);
-    auto value_states = v_proj_(hidden_states);
+    auto querys = q_proj_(hidden_states);
+    auto keys = k_proj_(hidden_states);
+    auto values = v_proj_(hidden_states);
 
-    // [batch_size, num_heads, seq_len, head_dim]
-    query_states = shape(query_states, tgt_len, bsz);
-    key_states = shape(key_states, -1, bsz);
-    value_states = shape(value_states, -1, bsz);
+    querys = querys.view({batch_size, seq_len, -1, head_dim_}).transpose(1, 2);
+    keys = keys.view({batch_size, seq_len, -1, head_dim_}).transpose(1, 2);
+    values = values.view({batch_size, seq_len, -1, head_dim_}).transpose(1, 2);
 
-    auto src_len = key_states.size(1);
-    auto attn_weights =
-        torch::matmul(query_states, key_states.transpose(-1, -2)) * scale_;
-    if (causal_mask.defined()) attn_weights = attn_weights + causal_mask;
-    attn_weights = torch::softmax(attn_weights, -1);
-    auto attn_output = torch::matmul(attn_weights, value_states);
+    torch::Tensor attn_output;
+    if (1) {
+      auto attn_weights =
+          torch::matmul(querys, keys.transpose(-1, -2)) * scale_;
+      if (attn_mask.defined()) attn_weights = attn_weights + attn_mask;
+      attn_weights = torch::softmax(attn_weights, -1);
+      attn_output = torch::matmul(attn_weights, values);
+      attn_output = attn_output.transpose(1, 2).contiguous();
+    } else {
+      attn_mask = torch::logical_not(attn_mask.to(torch::kBool));
+      attn_output = torch::scaled_dot_product_attention(
+          querys, keys, values, attn_mask, 0.0, false);
+    }
 
-    DCHECK_EQ(attn_output.sizes(),
-              torch::IntArrayRef({bsz * num_heads_, tgt_len, head_dim_}));
-    attn_output =
-        attn_output
-            .view(torch::IntArrayRef({bsz, num_heads_, tgt_len, head_dim_}))
-            .transpose(1, 2)
-            .contiguous();
-    attn_output =
-        attn_output.view(torch::IntArrayRef({bsz, tgt_len, embed_dim_}));
-
+    attn_output = attn_output.reshape({batch_size, seq_len, -1}).contiguous();
     return o_proj_(attn_output);
   }
 
@@ -332,13 +329,6 @@ class CLIPAttentionImpl : public torch::nn::Module {
   }
 
   void verify_loaded_weights(const std::string& prefix) const {}
-
- private:
-  torch::Tensor shape(torch::Tensor tensor, int64_t seq_len, int64_t bsz) {
-    return tensor.view({bsz, seq_len, num_heads_, head_dim_})
-        .transpose(1, 2)
-        .contiguous();
-  }
 
  private:
   int64_t embed_dim_;
@@ -483,30 +473,13 @@ class CLIPEncoderImpl : public torch::nn::Module {
   // Output hidden states for last intermediate layers
   torch::Tensor forward(const torch::Tensor& embeddings,
                         torch::Tensor causal_mask) {
-    bool output_hidden_states = false;
-    bool output_attentions = false;
-    c10::optional<torch::Tensor> attention_mask = c10::nullopt;
-    c10::optional<torch::Tensor> head_mask = c10::nullopt;
-    std::vector<torch::Tensor> all_hidden_states;
-    std::vector<torch::Tensor> all_attentions;
-    std::vector<torch::Tensor> encoder_states;
-
     auto hidden_states = embeddings;
     for (size_t i = 0; i < layers_.size(); ++i) {
-      encoder_states.emplace_back(hidden_states);
       auto& layer = layers_[i];
       hidden_states = layer(hidden_states, causal_mask);
     }
-    if (output_hidden_states) encoder_states.emplace_back(hidden_states);
 
-    std::vector<torch::Tensor> outputs = {hidden_states};
-    if (output_hidden_states) {
-      // todo
-    }
-    if (output_attentions) {
-      // todo
-    }
-    return outputs[0];
+    return hidden_states;
   }
 
   void load_state_dict(const StateDict& state_dict) {

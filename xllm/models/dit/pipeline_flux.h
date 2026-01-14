@@ -31,6 +31,8 @@
 #include "framework/model_context.h"
 #include "models/model_registry.h"
 #include "t5_encoder.h"
+#include "torch_npu/csrc/core/npu/register/OptionRegister.h"
+
 namespace xllm {
 
 float calculate_shift(int64_t image_seq_len,
@@ -722,6 +724,16 @@ class FluxPipelineImpl : public torch::nn::Module {
     int64_t actual_width = width.has_value()
                                ? width.value()
                                : default_sample_size_ * vae_scale_factor_;
+
+    {
+      auto value = c10_npu::option::GetOption("ALLOW_INTERNAL_FORMAT");
+      if (value) LOG(INFO) << "ALLOW_INTERNAL_FORMAT is " << value.value();
+    }
+    c10_npu::option::SetOption("ALLOW_INTERNAL_FORMAT", "disable");
+    {
+      auto value = c10_npu::option::GetOption("ALLOW_INTERNAL_FORMAT");
+      if (value) LOG(INFO) << "ALLOW_INTERNAL_FORMAT is " << value.value();
+    }
     // check inputs
     //   check_inputs(
     //       prompt, prompt_2, actual_height, actual_width,
@@ -855,19 +867,19 @@ class FluxPipelineImpl : public torch::nn::Module {
         negative_noise_pred.reset();
       }
       torch::Tensor prev_latents;
-      if (enable_acl_graph_) {
+      if (enable_acl_graph_ && 0) {
         if (sch_acl_graph_ == nullptr) {
           sch_acl_graph_ = std::make_unique<SchedulerAclGraph>();
           prev_latents = sch_acl_graph_->capture(
               scheduler_, options_, noise_pred, t, prepared_latents);
         } else {
-          AutoTimerScope("scheduler_acl_graph replay");
+          // AutoTimerScope("scheduler_acl_graph replay");
           prev_latents =
               sch_acl_graph_->replay(noise_pred, t, prepared_latents);
         }
         prepared_latents = prev_latents;
       } else {
-        AutoTimerScope("scheduler step");
+        // AutoTimerScope("scheduler step");
         auto prev_latents = scheduler_->step(noise_pred, t, prepared_latents);
         prepared_latents = prev_latents.prev_sample.detach();
       }
@@ -891,7 +903,7 @@ class FluxPipelineImpl : public torch::nn::Module {
           (unpacked_latents / vae_scaling_factor_) + vae_shift_factor_;
       unpacked_latents = unpacked_latents.to(_execution_dtype);
 
-      if (enable_acl_graph_ && 0) {
+      if (enable_acl_graph_) {
         if (vae_acl_graph_ == nullptr) {
           vae_acl_graph_ = std::make_unique<VAEAclGraph>();
           image = vae_acl_graph_->capture(vae_, options_, unpacked_latents);
